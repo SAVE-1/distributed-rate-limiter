@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dgraph-io/ristretto/v2"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,8 +17,7 @@ import (
 var (
 	version = "0.1"
 	// simplistic internal cache for now
-	cache              = map[string]RateLimiterEntry{}
-	fixedWindowCache   = map[string]FixedWindowEntry{}
+	cache              *ristretto.Cache[string, FixedWindowEntry]
 	requestsUntilLimit = 20
 	requestBaseTTL     = 1 * time.Minute
 )
@@ -47,6 +47,16 @@ func NewFixedWindowEntry(ip string) FixedWindowEntry {
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
 
+	cache, err := ristretto.NewCache(&ristretto.Config[string, FixedWindowEntry]{
+		NumCounters: 1e7,     // number of keys to track frequency of (10M).
+		MaxCost:     1 << 30, // maximum cost of cache (1GB).
+		BufferItems: 64,      // number of keys per Get buffer.
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer cache.Close()
+
 	r := gin.Default()
 	// r.Use(ratelimiterMiddleware())
 
@@ -56,7 +66,16 @@ func main() {
 		})
 	})
 
-	r.POST("/*", isRequestAllowed)
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message":      "feelin' fine!",
+			"health":       "healthy",
+			"health-level": 100,
+			"code":         239, // a custom code, mostly to have it, and as a placeholder I guess, no biggie
+		})
+	})
+
+	r.POST("/isrequestallowed", isRequestAllowed)
 
 	r.Run()
 }
@@ -72,14 +91,43 @@ func isRequestAllowed(c *gin.Context) {
 	err := c.ShouldBindJSON(&message)
 
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 	}
+
+	ip := c.Request.RemoteAddr
+	var cacheRequest FixedWindowEntry
+	// get value from cache
+	_, found := cache.Get(ip)
+	if !found {
+		panic("missing value")
+	}
+
+	requestCount := cacheRequest.HitCount
+	requestLastWindow := cacheRequest.FirstHit
+
+	if hasAMinutePassed(requestLastWindow) {
+		requestCount = 0
+		requestLastWindow = time.Now()
+	} else if requestsUntilLimit <= requestCount {
+		// should add some x-headers to explain I guess
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+	}
+
+	cacheRequest.FirstHit = requestLastWindow
+	cacheRequest.HitCount = requestCount
+
+	// set a value with a cost of 1
+	cache.Set(ip, cacheRequest, 1)
+
+	// wait for value to pass through buffers
+	cache.Wait()
 
 	c.JSON(http.StatusOK, gin.H{
 		"passes":    true,
 		"remaining": 0,
 		"resetTime": time.Now(),
 	})
+
 }
 
 func hasAMinutePassed(t time.Time) bool {
@@ -89,47 +137,45 @@ func hasAMinutePassed(t time.Time) bool {
 	return (timeNowInUnix - timeThenInUnix) >= int64(minuteInUnix)
 }
 
-func ratelimiterMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
+// func ratelimiterMiddleware() gin.HandlerFunc {
+// 	return func(c *gin.Context) {
 
-		var message IncomingMessage
-		err := c.ShouldBindJSON(&message)
+// 		var message IncomingMessage
+// 		err := c.ShouldBindJSON(&message)
 
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{})
-		}
+// 		if err != nil {
+// 			c.JSON(http.StatusBadRequest, gin.H{})
+// 		}
 
+// 		c.JSON(http.StatusOK, gin.H{
+// 			"passes":    true,
+// 			"remaining": 0,
+// 			"resetTime": time.Now(),
+// 		})
 
+// 		ip := c.Request.RemoteAddr
+// 		var cacheRequest FixedWindowEntry
+// 		value, found := cache.Get("key")
 
-		c.JSON(http.StatusOK, gin.H{
-			"passes":    true,
-			"remaining": 0,
-			"resetTime": time.Now(),
-		})
+// 		if !ok {
+// 			cacheRequest = NewFixedWindowEntry(ip)
+// 		}
 
-		ip := c.Request.RemoteAddr
-		var cacheRequest FixedWindowEntry
-		cacheRequest, ok := fixedWindowCache[ip]
+// 		requestCount := cacheRequest.HitCount
+// 		requestLastWindow := cacheRequest.FirstHit
 
-		if !ok {
-			cacheRequest = NewFixedWindowEntry(ip)
-		}
+// 		if hasAMinutePassed(requestLastWindow) {
+// 			requestCount = 0
+// 			requestLastWindow = time.Now()
+// 		} else if requestsUntilLimit <= requestCount {
+// 			// should add some x-headers to explain I guess
+// 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+// 		}
 
-		requestCount := cacheRequest.HitCount
-		requestLastWindow := cacheRequest.FirstHit
+// 		cacheRequest.FirstHit = requestLastWindow
+// 		cacheRequest.HitCount = requestCount
+// 		fixedWindowCache[ip] = cacheRequest
 
-		if hasAMinutePassed(requestLastWindow) {
-			requestCount = 0
-			requestLastWindow = time.Now()
-		} else if requestsUntilLimit <= requestCount {
-			// should add some x-headers to explain I guess
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-		}
-
-		cacheRequest.FirstHit = requestLastWindow
-		cacheRequest.HitCount = requestCount
-		fixedWindowCache[ip] = cacheRequest
-
-		c.Next()
-	}
-}
+// 		c.Next()
+// 	}
+// }
