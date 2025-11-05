@@ -48,7 +48,7 @@ func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
 
 	r := gin.Default()
-	r.Use(ratelimiterMiddleware())
+	// r.Use(ratelimiterMiddleware())
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -56,13 +56,30 @@ func main() {
 		})
 	})
 
-	r.Any("/*", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
+	r.POST("/*", isRequestAllowed)
 
 	r.Run()
+}
+
+type IncomingMessage struct {
+	ClientId int
+	RulesId  int
+}
+
+// isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
+func isRequestAllowed(c *gin.Context) {
+	var message IncomingMessage
+	err := c.ShouldBindJSON(&message)
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"passes":    true,
+		"remaining": 0,
+		"resetTime": time.Now(),
+	})
 }
 
 func hasAMinutePassed(t time.Time) bool {
@@ -74,6 +91,22 @@ func hasAMinutePassed(t time.Time) bool {
 
 func ratelimiterMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+
+		var message IncomingMessage
+		err := c.ShouldBindJSON(&message)
+
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{})
+		}
+
+
+
+		c.JSON(http.StatusOK, gin.H{
+			"passes":    true,
+			"remaining": 0,
+			"resetTime": time.Now(),
+		})
+
 		ip := c.Request.RemoteAddr
 		var cacheRequest FixedWindowEntry
 		cacheRequest, ok := fixedWindowCache[ip]
@@ -89,7 +122,6 @@ func ratelimiterMiddleware() gin.HandlerFunc {
 			requestCount = 0
 			requestLastWindow = time.Now()
 		} else if requestsUntilLimit <= requestCount {
-
 			// should add some x-headers to explain I guess
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
 		}
