@@ -16,32 +16,15 @@ import (
 
 var (
 	version = "0.1"
-	// simplistic internal cache for now
 	cache              *ristretto.Cache[string, FixedWindowEntry]
 	requestsUntilLimit = 20
 	requestBaseTTL     = 1 * time.Minute
 )
 
-type RateLimiterEntry struct {
-	Ip           string
-	FirstHit     time.Time
-	HitCount     int
-	RatelimitTTL time.Duration
-}
-
 type FixedWindowEntry struct {
 	Ip       string
 	FirstHit time.Time
 	HitCount int
-}
-
-// I'm not using the heap here, as this in my understanding quicker computationally
-func NewFixedWindowEntry(ip string) FixedWindowEntry {
-	return FixedWindowEntry{
-		Ip:       ip,
-		FirstHit: time.Now(),
-		HitCount: 0,
-	}
 }
 
 func main() {
@@ -52,13 +35,13 @@ func main() {
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
 	})
+
 	if err != nil {
 		panic(err)
 	}
 	defer cache.Close()
 
 	r := gin.Default()
-	// r.Use(ratelimiterMiddleware())
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -127,7 +110,6 @@ func isRequestAllowed(c *gin.Context) {
 		"remaining": 0,
 		"resetTime": time.Now(),
 	})
-
 }
 
 func hasAMinutePassed(t time.Time) bool {
@@ -136,46 +118,3 @@ func hasAMinutePassed(t time.Time) bool {
 	minuteInUnix := 60
 	return (timeNowInUnix - timeThenInUnix) >= int64(minuteInUnix)
 }
-
-// func ratelimiterMiddleware() gin.HandlerFunc {
-// 	return func(c *gin.Context) {
-
-// 		var message IncomingMessage
-// 		err := c.ShouldBindJSON(&message)
-
-// 		if err != nil {
-// 			c.JSON(http.StatusBadRequest, gin.H{})
-// 		}
-
-// 		c.JSON(http.StatusOK, gin.H{
-// 			"passes":    true,
-// 			"remaining": 0,
-// 			"resetTime": time.Now(),
-// 		})
-
-// 		ip := c.Request.RemoteAddr
-// 		var cacheRequest FixedWindowEntry
-// 		value, found := cache.Get("key")
-
-// 		if !ok {
-// 			cacheRequest = NewFixedWindowEntry(ip)
-// 		}
-
-// 		requestCount := cacheRequest.HitCount
-// 		requestLastWindow := cacheRequest.FirstHit
-
-// 		if hasAMinutePassed(requestLastWindow) {
-// 			requestCount = 0
-// 			requestLastWindow = time.Now()
-// 		} else if requestsUntilLimit <= requestCount {
-// 			// should add some x-headers to explain I guess
-// 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-// 		}
-
-// 		cacheRequest.FirstHit = requestLastWindow
-// 		cacheRequest.HitCount = requestCount
-// 		fixedWindowCache[ip] = cacheRequest
-
-// 		c.Next()
-// 	}
-// }
