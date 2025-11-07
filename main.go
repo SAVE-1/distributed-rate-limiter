@@ -15,7 +15,7 @@ import (
 // to check if a request should be allowed.
 
 var (
-	version = "0.1"
+	version            = "0.1"
 	cache              *ristretto.Cache[string, FixedWindowEntry]
 	requestsUntilLimit = 20
 	requestBaseTTL     = 1 * time.Minute
