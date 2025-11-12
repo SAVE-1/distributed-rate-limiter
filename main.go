@@ -80,14 +80,18 @@ func isRequestAllowed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 	}
 
-
-
 	ip := c.Request.RemoteAddr
 
+	internal.AddHash(fmt.Sprintf("ratelimit:%s", ip), []string{
+		"HitCount", "1",
+		"FirstHit", time.Now().String(),
+		"Window", "1min",
+	})
+
 	/* 
-		
+		At this time, I'm going to use the naive implementation, where I fetch the user, update and send back
 
-
+		At a later time I will do the LUA-REDIS optimization
 	*/
 
 
