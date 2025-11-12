@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/gin-gonic/gin"
 )
@@ -15,7 +16,7 @@ import (
 // to check if a request should be allowed.
 
 var (
-	version            = "0.1"
+	version            = "0.2"
 	cache              *ristretto.Cache[string, FixedWindowEntry]
 	requestsUntilLimit = 20
 	requestBaseTTL     = 1 * time.Minute
@@ -29,6 +30,8 @@ type FixedWindowEntry struct {
 
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
+
+	internal.InitRedis()
 
 	cache, err := ristretto.NewCache(&ristretto.Config[string, FixedWindowEntry]{
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
@@ -58,7 +61,7 @@ func main() {
 		})
 	})
 
-	r.POST("/isrequestallowed", isRequestAllowed)
+	r.POST("/ratelimit", isRequestAllowed)
 
 	r.Run()
 }
@@ -77,7 +80,17 @@ func isRequestAllowed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 	}
 
+
+
 	ip := c.Request.RemoteAddr
+
+	/* 
+		
+
+
+	*/
+
+
 	var cacheRequest FixedWindowEntry
 	// get value from cache
 	_, found := cache.Get(ip)
