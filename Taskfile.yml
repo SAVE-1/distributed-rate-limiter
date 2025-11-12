@@ -15,3 +15,8 @@ tasks:
     deps: [build]
     cmds:
       - ./bin/{{.EXENAME}}
+
+# UTILITY
+  loc:
+    cmds:
+      - cloc . --exclude-dir=.git,temp
