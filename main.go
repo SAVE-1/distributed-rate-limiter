@@ -17,7 +17,7 @@ import (
 
 var (
 	version            = "0.2"
-	cache              *ristretto.Cache[string, FixedWindowEntry]
+	cache              *ristretto.Cache[string, internal.RedisHit]
 	requestsUntilLimit = 20
 	requestBaseTTL     = 1 * time.Minute
 )
@@ -33,7 +33,7 @@ func main() {
 
 	internal.InitRedis()
 
-	cache, err := ristretto.NewCache(&ristretto.Config[string, FixedWindowEntry]{
+	cache, err := ristretto.NewCache(&ristretto.Config[string, internal.RedisHit]{
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
@@ -67,71 +67,77 @@ func main() {
 }
 
 type IncomingMessage struct {
-	ClientId int
-	RulesId  int
+	ClientId string `json:"ClientId" binding:"required"`
+	RulesId  string `json:"RulesId" binding:"required"`
+}
+
+func (i IncomingMessage) String() string {
+	return fmt.Sprintf("client-id: %s, rules-id: %s", i.ClientId, i.RulesId)
 }
 
 // isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
 func isRequestAllowed(c *gin.Context) {
 	var message IncomingMessage
-	err := c.ShouldBindJSON(&message)
 
-	if err != nil {
+	if err := c.ShouldBindJSON(&message); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 	}
 
+	fmt.Println(message)
+
 	ip := c.Request.RemoteAddr
 
-	internal.AddHash(fmt.Sprintf("ratelimit:%s", ip), []string{
-		"HitCount", "1",
-		"FirstHit", time.Now().String(),
-		"Window", "1min",
+	internal.AddHash(fmt.Sprintf("ratelimit:%s", ip), internal.RedisHit{
+		HitCount: 1,
+		FirstHit: time.Now().Unix(),
+		Window:   "1min",
 	})
 
-	/* 
+	/*
 		At this time, I'm going to use the naive implementation, where I fetch the user, update and send back
 
 		At a later time I will do the LUA-REDIS optimization
 	*/
 
-
-	var cacheRequest FixedWindowEntry
+	var cacheRequest internal.RedisHit
 	// get value from cache
-	_, found := cache.Get(ip)
-	if !found {
-		panic("missing value")
+	user, found := cache.Get(ip)
+
+	if found {
+		fmt.Println(user)
+		requestCount := cacheRequest.HitCount
+		requestLastWindow := cacheRequest.FirstHit
+
+		if hasAMinutePassed(requestLastWindow) {
+			requestCount = 0
+			requestLastWindow = time.Now().Unix()
+		} else if requestsUntilLimit <= requestCount {
+			// should add some x-headers to explain I guess
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+		}
+
+		cacheRequest.FirstHit = requestLastWindow
+		cacheRequest.HitCount = requestCount
+
+		// set a value with a cost of 1
+		cache.Set(ip, cacheRequest, 1)
+
+		// wait for value to pass through buffers
+		cache.Wait()
+
+		c.JSON(http.StatusOK, gin.H{
+			"passes":    true,
+			"remaining": 0,
+			"resetTime": time.Now(),
+		})
+
+	} else {
+		fmt.Println(fmt.Sprintf("ip not in cache: %s", ip))
 	}
-
-	requestCount := cacheRequest.HitCount
-	requestLastWindow := cacheRequest.FirstHit
-
-	if hasAMinutePassed(requestLastWindow) {
-		requestCount = 0
-		requestLastWindow = time.Now()
-	} else if requestsUntilLimit <= requestCount {
-		// should add some x-headers to explain I guess
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-	}
-
-	cacheRequest.FirstHit = requestLastWindow
-	cacheRequest.HitCount = requestCount
-
-	// set a value with a cost of 1
-	cache.Set(ip, cacheRequest, 1)
-
-	// wait for value to pass through buffers
-	cache.Wait()
-
-	c.JSON(http.StatusOK, gin.H{
-		"passes":    true,
-		"remaining": 0,
-		"resetTime": time.Now(),
-	})
 }
 
-func hasAMinutePassed(t time.Time) bool {
+func hasAMinutePassed(t int64) bool {
 	timeNowInUnix := time.Now().Unix()
-	timeThenInUnix := t.Unix()
 	minuteInUnix := 60
-	return (timeNowInUnix - timeThenInUnix) >= int64(minuteInUnix)
+	return (timeNowInUnix - t) >= int64(minuteInUnix)
 }

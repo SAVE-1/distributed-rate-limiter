@@ -21,7 +21,7 @@ var (
 
 type RedisHit struct {
 	HitCount int
-	FirstHit int
+	FirstHit int64
 	Window   string
 }
 
@@ -54,7 +54,7 @@ func InitRedis() {
 	fmt.Println(res3) // >>> 4972
 }
 
-func AddHash(hash string, fields []string) (int64, error) {
+func AddHash(hash string, fields RedisHit) (int64, error) {
 	ctx := context.Background()
 	res1, err := redisClient.HSet(ctx, "bike:1", fields).Result()
 	if err != nil {
