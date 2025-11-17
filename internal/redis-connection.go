@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -11,52 +12,52 @@ var (
 	redisClient *redis.Client
 )
 
-/*
-
-	"HitCount", "1",
-	"FirstHit", time.Now().String(),
-	"Window", "1min",
-
-*/
-
-type RedisHit struct {
-	HitCount int
-	FirstHit int64
-	Window   string
+type RedisEntry struct {
+	HitCount int64  `redis:"hitcount"`
+	FirstHit int64  `redis:"firsthit"`
+	Window   string `redis:"window"`
+	ok       bool
 }
 
-func InitRedis() {
+func (i RedisEntry) Ok() bool {
+	return i.ok
+}
+
+func (i RedisEntry) String() string {
+	return fmt.Sprintf("[ hit-count: %d, first-hit: %d, window: %s ]", i.HitCount, i.FirstHit, i.Window)
+}
+
+func InitRedis() error {
+	// these will be moved into environment vars in the future
 	redisClient = redis.NewClient(&redis.Options{
 		Addr:     "127.0.0.1:6379",
 		Username: "default",    // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
 		Password: "mypassword", // use your Redis password
 	})
-
 	ctx := context.Background()
 
-	hashFields := []string{
-		"model", "Deimos",
-	}
-
-	res1, err := redisClient.HSet(ctx, "bike:1", hashFields).Result()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(res1) // >>> 4
-
-	res3, err := redisClient.HGet(ctx, "bike:1", "price").Result()
+	_, err := redisClient.Ping(ctx).Result()
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	fmt.Println(res3) // >>> 4972
+	return nil
 }
 
-func AddHash(hash string, fields RedisHit) (int64, error) {
+func AddHashToRedis(hash string, fields RedisEntry) (int64, error) {
 	ctx := context.Background()
 	res1, err := redisClient.HSet(ctx, "bike:1", fields).Result()
+
+	if _, err := redisClient.Pipelined(ctx, func(rdb redis.Pipeliner) error {
+		rdb.HSet(ctx, hash, "FirstHit", fields.FirstHit)
+		rdb.HSet(ctx, hash, "HitCount", fields.HitCount)
+		rdb.HSet(ctx, hash, "Window", fields.Window)
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+
 	if err != nil {
 		return 0, err
 	}
@@ -64,6 +65,43 @@ func AddHash(hash string, fields RedisHit) (int64, error) {
 	return res1, nil
 }
 
-func GetHash(hash string) int {
-	return 0
+// GetHashFromRedis retrieves a Redis hash and parses it into a RedisEntry.
+//
+// If the hash exists, the returned RedisEntry contains the parsed fields
+// "HitCount" and "FirstHit" as int64 values and "Window" as a string.
+// If parsing of "HitCount" or "FirstHit" fails, the corresponding field
+// is set to -1.
+//
+// If the hash does not exist, GetHashFromRedis returns an RedisEntry with empty set to true
+// and a nil error.
+//
+// If there is an error fetching the hash from Redis, the error is returned
+// and the RedisEntry is empty.
+func GetHashFromRedis(hash string) (RedisEntry, error) {
+	ctx := context.Background()
+	val, err := redisClient.HGetAll(ctx, hash).Result()
+	if err != nil {
+		return RedisEntry{}, err
+	}
+
+	if len(val) == 0 {
+		return RedisEntry{ok: false}, nil
+	}
+
+	hitcount, hitCountErr := strconv.ParseInt(val["HitCount"], 10, 64) // Parse as base 10 and store as int64
+	if hitCountErr != nil {
+		hitcount = -1
+	}
+
+	firsthit, firstHitErr := strconv.ParseInt(val["FirstHit"], 10, 64) // Parse as base 10 and store as int64
+	if firstHitErr != nil {
+		firsthit = -1
+	}
+
+	return RedisEntry{
+		HitCount: hitcount,
+		FirstHit: firsthit,
+		Window:   val["Window"],
+		ok:       true,
+	}, nil
 }
