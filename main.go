@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,13 +9,40 @@ import (
 	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
 // https://www.hellointerview.com/learn/system-design/problem-breakdowns/distributed-rate-limiter
 
 // A rate limiter is an infrastructure component that other services call
 // to check if a request should be allowed.
+
+/*
+
+LIMITATIONS:
+	for now, only allowed global window is 1min
+
+FOR NOW:
+	if the REDIS cache instance is down,
+	the internal cache will be updated, but once REDIS is back up again,
+	the REDIS cache WILL NOT BE updated against the internal cache, but I suppose it is okay'ish in this case
+	as the data is not mission critical, and the data velocity should be pretty high as well
+
+	it does mean the rate limiting -rate is going to be somewhat lower in some cases though,
+	which is bad for the overall system, but maybe I'll just live with it for now
+
+LIMITATIONS
+	For now, the only supported global window is 1 minute.
+
+CURRENT BEHAVIOR / KNOWN ISSUES
+	If the Redis cache instance goes down:
+	– The in-memory (internal) cache continues to be updated normally.
+	– Once Redis comes back online, it will not be automatically repopulated from the in-memory cache.
+	– This is acceptable for the moment because the data is not mission-critical and has high churn/velocity anyway.
+
+	This does mean that, during a Redis outage + recovery, the effective rate-limit enforcement may be slightly looser than intended in some cases.
+	– This is suboptimal for the overall system, but I’ll live with it for now.
+
+*/
 
 var (
 	version            = "0.2"
@@ -36,35 +62,18 @@ type FixedWindowEntry struct {
 }
 
 func main() {
-	var ctx = context.Background()
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "127.0.0.1:6379",
-		Username: "default",    // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
-		Password: "mypassword", // use your Redis password
-	})
-
-	err := rdb.HSet(ctx, "user:1001", "name", "John", "age", "30").Err()
-	if err != nil {
-		panic(err)
-	}
-
-	val, err := rdb.HGetAll(ctx, "user:1003").Result()
-	if err != nil {
-		fmt.Println("user:1003 - not found")
-	}
-
-	fmt.Println("user:1003", val)
-
-	rdb.Close()
-
-	// ip := "127.0.0.1:899"
-	// i := strings.Index(ip, ":")
-	// fmt.Println(ip[:i])
-
 	fmt.Println("Distributed rate limiter, version ", version)
 
-	redisConnectionError := internal.InitRedis()
+	if settingGlobalWindow != "1min" {
+		fmt.Println("configuration error, global window must be 1min for now")
+		return
+	}
+
+	address := "127.0.0.1:6379"
+	username := "default"
+	password := "mypassword"
+
+	redisConnectionError := internal.InitRedis(address, username, password)
 
 	if redisConnectionError != nil {
 		fmt.Println(redisConnectionError)
@@ -78,25 +87,15 @@ func main() {
 		return
 	}
 
-	requestUserHash := "ratelimit:1.1.1.1"
-
-	user, doesHashExistError := internal.GetHashFromRedis(requestUserHash)
-
-	if doesHashExistError != nil {
-		fmt.Println("err")
-	} else if user.Ok() {
-
-	}
-
-	cache, err := ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
+	cache, ristrettoInitError := ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
 	})
 
 	// this is fatal, internal cache is required in all cases
-	if err != nil {
-		fmt.Println("Unable to init internal cache:", err)
+	if ristrettoInitError != nil {
+		fmt.Println("Unable to init internal cache:", ristrettoInitError)
 		return
 	}
 
@@ -144,17 +143,49 @@ func isRequestAllowed(c *gin.Context) {
 
 	fmt.Println(message)
 
-	ip := getClientIpWithoutPort(c)
+	ip := extractClientIpWithoutPort(c)
 
 	fmt.Println("connection ip:", ip)
 
 	requestUserHash := fmt.Sprintf("ratelimit:%s", ip)
 
-	user, doesHashExistError := internal.GetHashFromRedis(requestUserHash)
+	user, redisError := internal.GetHashFromRedis(requestUserHash)
 
-	if doesHashExistError != nil {
+	if redisError != nil { // error with REDIS
 		fmt.Println("error fetching from redis")
-	} else if user != (internal.RedisEntry{}) {
+		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
+		return
+	} else if user != (internal.RedisEntry{}) { // no user found
+		fmt.Println("Hash does not exist")
+
+	 	entry := internal.RedisEntry{
+			HitCount: 1,
+			FirstHit: time.Now().Unix(),
+		}
+
+		fieldSetCount, err := internal.AddHashToRedis(requestUserHash, entry)
+
+		if err != nil {
+			fmt.Println("REDIS error:", err)
+		} else {
+			fmt.Printf("REDIS HSet success: %d fields set", fieldSetCount)
+		}
+
+		cache.Set(requestUserHash, entry, 1)
+		// wait for value to pass through buffers
+  		cache.Wait()
+
+		// respond to request
+		// headers:
+		// RateLimit-Limit
+		// RateLimit-Remaining == 
+		// RateLimit-Reset == 
+		// c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		c.Writer.Header().Set("X-RateLimit-Remaining", "true")
+		c.Writer.Header().Set("X-RateLimit-Reset", "true")
+
+	} else { // user found
 		user.HitCount++
 		
 		/* 
@@ -165,39 +196,31 @@ func isRequestAllowed(c *gin.Context) {
 			}
 		*/
 
-		// requestLastWindow := v.FirstHit
-		// if hasAMinutePassed(requestLastWindow) {
-		// 	requestCount = 0
-		// 	requestLastWindow = time.Now().Unix()
-		// } else if settingRequestsUntilLimit <= requestCount {
-		// 	// should add some x-headers to explain I guess
-		// 	c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-		// }
+		requestLastWindow := user.FirstHit
+		if hasAMinutePassed(requestLastWindow) {
+			user.HitCount = 0
+			requestLastWindow = time.Now().Unix()
+		} else if settingRequestsUntilLimit <= user.HitCount {
+			// should add some x-headers to explain I guess
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+		}
 
-		passes := false
-
-		c.JSON(http.StatusOK, gin.H{"passes": passes})
 		internal.AddHashToRedis(requestUserHash, user)
-	} else { // redis hit
-		fmt.Println("Hash does not exist")
-
-	 	entry := internal.RedisEntry{
-			HitCount: 1,
-			FirstHit: time.Now().Unix(),
-			Window:   settingGlobalWindow,
-		}
-
-		fieldSetCount, err := internal.AddHashToRedis(requestUserHash, entry)
-
-		if err != nil {
-			fmt.Println("unable to set hash in redis:", err)
-		} else {
-			fmt.Println("fields set:", fieldSetCount)
-		}
-
-		cache.Set(requestUserHash, entry, 1)
+		cache.Set(requestUserHash, user, 1)
 		// wait for value to pass through buffers
   		cache.Wait()
+
+		// respond to request
+
+	// 	HTTP/2 429 Too Many Requests
+	// Content-Type: application/json
+		
+	// {
+	//   "type": "https://example.com/probs/limit-exceeded",
+	//   "title": "Rate limit exceeded",
+	//   "detail": "Too many requests in a given amount of time, please try again later."
+	// }
+
 	}
 }
 
@@ -207,7 +230,7 @@ func hasAMinutePassed(t int64) bool {
 	return (timeNowInUnix - t) >= int64(minuteInUnix)
 }
 
-func getClientIpWithoutPort(c *gin.Context) string {
+func extractClientIpWithoutPort(c *gin.Context) string {
 	i := strings.Index(c.Request.RemoteAddr, ":")
 	return c.Request.RemoteAddr[:i]
 }

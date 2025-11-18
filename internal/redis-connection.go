@@ -15,7 +15,7 @@ var (
 type RedisEntry struct {
 	HitCount int64  `redis:"hitcount"`
 	FirstHit int64  `redis:"firsthit"`
-	Window   string `redis:"window"`
+	// Window   string `redis:"window"`
 	ok       bool
 }
 
@@ -24,15 +24,15 @@ func (i RedisEntry) Ok() bool {
 }
 
 func (i RedisEntry) String() string {
-	return fmt.Sprintf("[ hit-count: %d, first-hit: %d, window: %s ]", i.HitCount, i.FirstHit, i.Window)
+	return fmt.Sprintf("[ hit-count: %d, first-hit: %d ]", i.HitCount, i.FirstHit)
 }
 
-func InitRedis() error {
+func InitRedis(address string, username string, password string) error {
 	// these will be moved into environment vars in the future
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "127.0.0.1:6379",
-		Username: "default",    // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
-		Password: "mypassword", // use your Redis password
+		Addr:     address,
+		Username: username,    // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
+		Password: password, // use your Redis password
 	})
 	ctx := context.Background()
 
@@ -46,23 +46,13 @@ func InitRedis() error {
 }
 
 func AddHashToRedis(hash string, fields RedisEntry) (int64, error) {
-	ctx := context.Background()
-	res1, err := redisClient.HSet(ctx, "bike:1", fields).Result()
+    ctx := context.Background()
 
-	if _, err := redisClient.Pipelined(ctx, func(rdb redis.Pipeliner) error {
-		rdb.HSet(ctx, hash, "FirstHit", fields.FirstHit)
-		rdb.HSet(ctx, hash, "HitCount", fields.HitCount)
-		rdb.HSet(ctx, hash, "Window", fields.Window)
-		return nil
-	}); err != nil {
-		panic(err)
-	}
-
-	if err != nil {
-		return 0, err
-	}
-
-	return res1, nil
+    return redisClient.HSet(ctx, hash, map[string]interface{}{
+        "hitcount": fields.HitCount,
+        "firsthit": fields.FirstHit,
+        // "window":   fields.Window,
+    }).Result()
 }
 
 // GetHashFromRedis retrieves a Redis hash and parses it into a RedisEntry.
@@ -101,7 +91,7 @@ func GetHashFromRedis(hash string) (RedisEntry, error) {
 	return RedisEntry{
 		HitCount: hitcount,
 		FirstHit: firsthit,
-		Window:   val["Window"],
+		// Window:   val["Window"],
 		ok:       true,
 	}, nil
 }
