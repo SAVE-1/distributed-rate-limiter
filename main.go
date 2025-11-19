@@ -175,8 +175,11 @@ func isRequestAllowed(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
 	} else if user.Ok() { // user found
+		fmt.Println("1st if")
 		fmt.Println("user found")
 		user.HitCount++
+
+		fmt.Println("user", user)
 
 		if hasAMinutePassed(user.FirstHit) {
 			user.HitCount = 1
@@ -189,6 +192,7 @@ func isRequestAllowed(c *gin.Context) {
 			// respond to request
 
 		} else if globalSettings.RequestsUntilLimit < user.HitCount {
+			fmt.Println("2nd if")
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
 			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
 			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
@@ -200,6 +204,12 @@ func isRequestAllowed(c *gin.Context) {
 
 			internal.AddHashToRedis(requestUserHash, user)
 			ristrettoCache.Set(requestUserHash, user, 1)
+			ristrettoCache.Wait()
+		} else {
+			fmt.Println("3rd if")
+			internal.AddHashToRedis(requestUserHash, user)
+			const cost int64 = 1
+			ristrettoCache.Set(requestUserHash, user, cost)
 			ristrettoCache.Wait()
 		}
 	} else { // no user found
@@ -251,7 +261,7 @@ func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 
 
 func hasAMinutePassed(previousInUnix int64) bool {
 	timeNowInUnix := time.Now().Unix()
-	var minuteInUnix int64 = 600 // I know this 10 minutes, but it's just for debugging/dev work, easier to check the cache
+	var minuteInUnix int64 = 60 // I know this 10 minutes, but it's just for debugging/dev work, easier to check the cache
 	return (timeNowInUnix - previousInUnix) >= minuteInUnix
 }
 

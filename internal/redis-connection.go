@@ -83,12 +83,12 @@ func GetHashFromRedis(hash string) (RedisEntry, error) {
 		return RedisEntry{ok: false}, nil
 	}
 
-	hitcount, hitCountErr := strconv.ParseInt(val["HitCount"], 10, 64) // Parse as base 10 and store as int64
+	hitcount, hitCountErr := strconv.ParseInt(val["hitcount"], 10, 64) // Parse as base 10 and store as int64
 	if hitCountErr != nil {
 		hitcount = -1
 	}
 
-	firsthit, firstHitErr := strconv.ParseInt(val["FirstHit"], 10, 64) // Parse as base 10 and store as int64
+	firsthit, firstHitErr := strconv.ParseInt(val["firsthit"], 10, 64) // Parse as base 10 and store as int64
 	if firstHitErr != nil {
 		firsthit = -1
 	}
