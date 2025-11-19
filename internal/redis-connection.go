@@ -45,13 +45,16 @@ func InitRedis(address string, username string, password string) error {
 	return nil
 }
 
+func CloseRedis() error {
+	return redisClient.Close()
+}
+
 func AddHashToRedis(hash string, fields RedisEntry) (int64, error) {
     ctx := context.Background()
-
-    return redisClient.HSet(ctx, hash, map[string]interface{}{
-        "hitcount": fields.HitCount,
-        "firsthit": fields.FirstHit,
-        // "window":   fields.Window,
+	
+    return redisClient.HSet(ctx, hash, []string{
+        "hitcount", strconv.FormatInt(fields.HitCount, 10),
+        "firsthit", strconv.FormatInt(fields.FirstHit, 10),
     }).Result()
 }
 
@@ -69,9 +72,11 @@ func AddHashToRedis(hash string, fields RedisEntry) (int64, error) {
 // and the RedisEntry is empty.
 func GetHashFromRedis(hash string) (RedisEntry, error) {
 	ctx := context.Background()
-	val, err := redisClient.HGetAll(ctx, hash).Result()
-	if err != nil {
-		return RedisEntry{}, err
+	val, hgetErr := redisClient.HGetAll(ctx, hash).Result()
+	fmt.Println("hgetErr:", hgetErr)
+	fmt.Println("vals:", val)
+	if hgetErr != nil {
+		return RedisEntry{}, hgetErr
 	}
 
 	if len(val) == 0 {
@@ -91,7 +96,6 @@ func GetHashFromRedis(hash string) (RedisEntry, error) {
 	return RedisEntry{
 		HitCount: hitcount,
 		FirstHit: firsthit,
-		// Window:   val["Window"],
 		ok:       true,
 	}, nil
 }

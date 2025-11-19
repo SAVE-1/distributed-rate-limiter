@@ -45,15 +45,24 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 */
 
 var (
-	version            = "0.2"
-	cache              *ristretto.Cache[string, internal.RedisEntry]
-	settingRequestsUntilLimit int64 = 20
-	settingRequestBaseTTL           = 1 * time.Minute
+	version        = "0.2"
+	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
+	// settingRequestsUntilLimit int64 = 20
+	// settingRequestBaseTTL           = 1 * time.Minute
 
 	// settings
-	settingAllowStartupWithoutRedis = false
-	settingGlobalWindow             = "1min"
+	globalSettings = Settings{
+		AllowStartupWithoutRedis: false,
+		Window:                   1 * time.Minute,
+		RequestsUntilLimit:       2,
+	}
 )
+
+type Settings struct {
+	AllowStartupWithoutRedis bool
+	Window                   time.Duration
+	RequestsUntilLimit       int64
+}
 
 type FixedWindowEntry struct {
 	Ip       string
@@ -64,8 +73,8 @@ type FixedWindowEntry struct {
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
 
-	if settingGlobalWindow != "1min" {
-		fmt.Println("configuration error, global window must be 1min for now")
+	if globalSettings.Window != 1*time.Minute {
+		fmt.Println("Configuration error, global window must be 1min for now")
 		return
 	}
 
@@ -78,12 +87,14 @@ func main() {
 	if redisConnectionError != nil {
 		fmt.Println(redisConnectionError)
 	} else {
-		fmt.Println("REDIS connection succeed")
+		fmt.Println("REDIS connection success")
 	}
 
-	if settingAllowStartupWithoutRedis {
+	// defer fmt.Println(internal.CloseRedis())
+
+	if globalSettings.AllowStartupWithoutRedis {
 		// stop the server altogether
-		fmt.Println("Stopping server")
+		fmt.Println("Powering down server")
 		return
 	}
 
@@ -95,7 +106,8 @@ func main() {
 
 	// this is fatal, internal cache is required in all cases
 	if ristrettoInitError != nil {
-		fmt.Println("Unable to init internal cache:", ristrettoInitError)
+		fmt.Println("Fatal, unable to init internal cache:", ristrettoInitError)
+		fmt.Println("Powering down server")
 		return
 	}
 
@@ -118,7 +130,11 @@ func main() {
 		})
 	})
 
-	r.POST("/ratelimit", isRequestAllowed)
+	// user-facing API
+	r.Group("/v1")
+	{
+		r.POST("/ratelimit", isRequestAllowed)
+	}
 
 	r.Run()
 }
@@ -139,6 +155,7 @@ func isRequestAllowed(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&message); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
+		return
 	}
 
 	fmt.Println(message)
@@ -149,18 +166,48 @@ func isRequestAllowed(c *gin.Context) {
 
 	requestUserHash := fmt.Sprintf("ratelimit:%s", ip)
 
+	fmt.Println("requestUserHash: ", requestUserHash)
+
 	user, redisError := internal.GetHashFromRedis(requestUserHash)
 
 	if redisError != nil { // error with REDIS
 		fmt.Println("error fetching from redis")
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
-	} else if user != (internal.RedisEntry{}) { // no user found
-		fmt.Println("Hash does not exist")
+	} else if user.Ok() { // user found
+		fmt.Println("user found")
+		user.HitCount++
 
-	 	entry := internal.RedisEntry{
+		if hasAMinutePassed(user.FirstHit) {
+			user.HitCount = 1
+
+			internal.AddHashToRedis(requestUserHash, user)
+			const cost int64 = 1
+			ristrettoCache.Set(requestUserHash, user, cost)
+			ristrettoCache.Wait()
+
+			// respond to request
+
+		} else if globalSettings.RequestsUntilLimit < user.HitCount {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
+			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
+			c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
+			c.JSON(http.StatusOK, gin.H{
+				"title":  "Rate limit exceeded",
+				"detail": "Too many requests in a given amount of time, please try again later.",
+			})
+
+			internal.AddHashToRedis(requestUserHash, user)
+			ristrettoCache.Set(requestUserHash, user, 1)
+			ristrettoCache.Wait()
+		}
+	} else { // no user found
+		fmt.Println("Hash does not exist")
+		_time := time.Now()
+		entry := internal.RedisEntry{
 			HitCount: 1,
-			FirstHit: time.Now().Unix(),
+			FirstHit: _time.Unix(),
 		}
 
 		fieldSetCount, err := internal.AddHashToRedis(requestUserHash, entry)
@@ -171,63 +218,41 @@ func isRequestAllowed(c *gin.Context) {
 			fmt.Printf("REDIS HSet success: %d fields set", fieldSetCount)
 		}
 
-		cache.Set(requestUserHash, entry, 1)
-		// wait for value to pass through buffers
-  		cache.Wait()
+		ristrettoCache.Set(requestUserHash, entry, 1)
+		ristrettoCache.Wait() // wait for value to pass through buffers
 
 		// respond to request
-		// headers:
-		// RateLimit-Limit
-		// RateLimit-Remaining == 
-		// RateLimit-Reset == 
-		// c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-
-		c.Writer.Header().Set("X-RateLimit-Remaining", "true")
-		c.Writer.Header().Set("X-RateLimit-Reset", "true")
-
-	} else { // user found
-		user.HitCount++
-		
-		/* 
-			{
-				passes: boolean, 
-				remaining: number, 
-				resetTime: timestamp
-			}
-		*/
-
-		requestLastWindow := user.FirstHit
-		if hasAMinutePassed(requestLastWindow) {
-			user.HitCount = 0
-			requestLastWindow = time.Now().Unix()
-		} else if settingRequestsUntilLimit <= user.HitCount {
-			// should add some x-headers to explain I guess
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-		}
-
-		internal.AddHashToRedis(requestUserHash, user)
-		cache.Set(requestUserHash, user, 1)
-		// wait for value to pass through buffers
-  		cache.Wait()
-
-		// respond to request
-
-	// 	HTTP/2 429 Too Many Requests
-	// Content-Type: application/json
-		
-	// {
-	//   "type": "https://example.com/probs/limit-exceeded",
-	//   "title": "Rate limit exceeded",
-	//   "detail": "Too many requests in a given amount of time, please try again later."
-	// }
-
+		c.Writer.Header().Set("RateLimit-Remaining", string(globalSettings.RequestsUntilLimit-entry.HitCount))
+		c.Writer.Header().Set("RateLimit-Reset", _time.Add(globalSettings.Window).String())
+		c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
+		c.JSON(http.StatusOK, gin.H{
+			"title":  "Rate limit ok",
+			"detail": "Rate limit ok",
+		})
 	}
 }
 
-func hasAMinutePassed(t int64) bool {
+func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 {
+	/*
+		example:
+			12:59:00 <- user first hit
+			12:59:30 <- user reached limit
+			13:00:00 <- rate limit reset
+
+		so:
+			rateLimitTimer = 13:00:00
+			userFirstHit = 12:59:00
+			timeNow = 12:59:30
+	*/
+
+	userFirstHitAsTime := time.Unix(userFirstHit, 0)
+	return (userFirstHitAsTime.Add(window).UnixMilli() - time.Now().UnixMilli()) / 1000
+}
+
+func hasAMinutePassed(previousInUnix int64) bool {
 	timeNowInUnix := time.Now().Unix()
-	minuteInUnix := 60
-	return (timeNowInUnix - t) >= int64(minuteInUnix)
+	var minuteInUnix int64 = 600 // I know this 10 minutes, but it's just for debugging/dev work, easier to check the cache
+	return (timeNowInUnix - previousInUnix) >= minuteInUnix
 }
 
 func extractClientIpWithoutPort(c *gin.Context) string {

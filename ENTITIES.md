@@ -35,3 +35,28 @@
 
 ```
 
+# Response from rate limiter
+
+from: https://www.ietf.org/archive/id/draft-polli-ratelimit-headers-02.html#section-1.3
+    This proposal defines syntax and semantics for the following header fields:
+    - RateLimit-Limit: containing the requests quota in the time window;
+    - RateLimit-Remaining: containing the remaining requests quota in the current window; 
+    - RateLimit-Reset: containing the time remaining in the current window, specified in seconds.
+
+An example:
+```
+
+when too many requests
+HTTP/2 429 Too Many Requests
+Content-Type: application/json
+RateLimit-Remaining: 0
+RateLimit-Reset: 
+RateLimit-Limit: 20
+
+{
+  "title": "Rate limit exceeded",
+  "detail": "Too many requests in a given amount of time, please try again later."
+}
+
+```
+
