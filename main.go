@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
@@ -47,10 +48,6 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 var (
 	version        = "0.2"
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
-	// settingRequestsUntilLimit int64 = 20
-	// settingRequestBaseTTL           = 1 * time.Minute
-
-	// settings
 	globalSettings = Settings{
 		AllowStartupWithoutRedis: false,
 		Window:                   1 * time.Minute,
@@ -71,6 +68,14 @@ type FixedWindowEntry struct {
 }
 
 func main() {
+
+	j := internal.RedisEntry{
+		HitCount: 1,
+		FirstHit: 1,
+	}
+
+	fmt.Println(int64(unsafe.Sizeof(j)))
+
 	fmt.Println("Distributed rate limiter, version ", version)
 
 	if globalSettings.Window != 1*time.Minute {
@@ -102,6 +107,7 @@ func main() {
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
+		Cost: internal.GetRedisEntryCostFunction(),
 	})
 
 	// this is fatal, internal cache is required in all cases
@@ -146,7 +152,16 @@ type IncomingMessage struct {
 }
 
 func (i IncomingMessage) String() string {
-	return fmt.Sprintf("client-id: %s, rules-id: %s", i.ClientId, i.RulesId)
+	var b strings.Builder
+    b.Grow(128) // preallocate enough
+
+    b.WriteString("[ client-id: ")
+    b.WriteString(i.ClientId)
+    b.WriteString(", rules-id: ")
+    b.WriteString(i.RulesId)
+    b.WriteString(" ]")
+
+	return b.String()
 }
 
 // isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
@@ -164,7 +179,7 @@ func isRequestAllowed(c *gin.Context) {
 
 	fmt.Println("connection ip:", ip)
 
-	requestUserHash := fmt.Sprintf("ratelimit:%s", ip)
+	requestUserHash := "ratelimit:" + ip
 
 	fmt.Println("requestUserHash: ", requestUserHash)
 
@@ -184,9 +199,9 @@ func isRequestAllowed(c *gin.Context) {
 		if hasAMinutePassed(user.FirstHit) {
 			user.HitCount = 1
 
-			internal.AddHashToRedis(requestUserHash, user)
+			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 			const cost int64 = 1
-			ristrettoCache.Set(requestUserHash, user, cost)
+			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
 			ristrettoCache.Wait()
 
 			// respond to request
@@ -202,14 +217,13 @@ func isRequestAllowed(c *gin.Context) {
 				"detail": "Too many requests in a given amount of time, please try again later.",
 			})
 
-			internal.AddHashToRedis(requestUserHash, user)
-			ristrettoCache.Set(requestUserHash, user, 1)
+			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
 			ristrettoCache.Wait()
 		} else {
 			fmt.Println("3rd if")
-			internal.AddHashToRedis(requestUserHash, user)
-			const cost int64 = 1
-			ristrettoCache.Set(requestUserHash, user, cost)
+			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
 			ristrettoCache.Wait()
 		}
 	} else { // no user found
@@ -220,15 +234,15 @@ func isRequestAllowed(c *gin.Context) {
 			FirstHit: _time.Unix(),
 		}
 
-		fieldSetCount, err := internal.AddHashToRedis(requestUserHash, entry)
+		err := internal.AddHashToRedis(requestUserHash, entry, globalSettings.Window)
 
 		if err != nil {
 			fmt.Println("REDIS error:", err)
 		} else {
-			fmt.Printf("REDIS HSet success: %d fields set", fieldSetCount)
+			fmt.Printf("REDIS HSet success")
 		}
 
-		ristrettoCache.Set(requestUserHash, entry, 1)
+		ristrettoCache.SetWithTTL(requestUserHash, entry, 0, globalSettings.Window)
 		ristrettoCache.Wait() // wait for value to pass through buffers
 
 		// respond to request
