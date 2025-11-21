@@ -12,10 +12,23 @@ There is still plenty to do, such as:
 # Requirements
 - Go, version 1.24.5
 - Docker desktop
+## Nice to have
+- Task, https://taskfile.dev/
 
 # Setting up local REDIS with management console for the IP/UserId/API-key cache
 ```powershell
     docker run -d --name rate-limiter-redis-stack -p 6379:6379 -p 8001:8001 -e REDIS_ARGS="--requirepass mypassword" redis/redis-stack:latest
+```
+
+# How to run
+Either with
+```powershell
+    task run
+```
+or
+```powershell
+    go build -o bin/ratelimiter.exe
+    ./bin/ratelimiter.exe
 ```
 
 ## Management console URL
