@@ -205,6 +205,13 @@ func isRequestAllowed(c *gin.Context) {
 			ristrettoCache.Wait()
 
 			// respond to request
+			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
+			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
+			c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
+			c.JSON(http.StatusOK, gin.H{
+				"title":  "Rate limit OK",
+				"detail": "Rate limit OK.",
+			})
 
 		} else if globalSettings.RequestsUntilLimit < user.HitCount {
 			fmt.Println("2nd if")
