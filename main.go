@@ -204,7 +204,6 @@ func isRequestAllowed(c *gin.Context) {
 			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
 			ristrettoCache.Wait()
 
-			// respond to request
 			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
 			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
 			c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
@@ -252,7 +251,6 @@ func isRequestAllowed(c *gin.Context) {
 		ristrettoCache.SetWithTTL(requestUserHash, entry, 0, globalSettings.Window)
 		ristrettoCache.Wait() // wait for value to pass through buffers
 
-		// respond to request
 		c.Writer.Header().Set("RateLimit-Remaining", string(globalSettings.RequestsUntilLimit-entry.HitCount))
 		c.Writer.Header().Set("RateLimit-Reset", _time.Add(globalSettings.Window).String())
 		c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
