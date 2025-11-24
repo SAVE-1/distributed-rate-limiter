@@ -168,18 +168,20 @@ func (i IncomingMessage) String() string {
 func isRequestAllowed(c *gin.Context) {
 	var message IncomingMessage
 
+	userId := ""
+
 	if err := c.ShouldBindJSON(&message); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 		return
-	}
+	} 
+	
+	userId = message.ClientId
 
 	fmt.Println(message)
 
-	ip := extractClientIpWithoutPort(c)
+	fmt.Println("user id:", userId)
 
-	fmt.Println("connection ip:", ip)
-
-	requestUserHash := "ratelimit:" + ip
+	requestUserHash := "ratelimit:" + userId
 
 	fmt.Println("requestUserHash: ", requestUserHash)
 
