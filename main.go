@@ -277,7 +277,8 @@ func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 
 	*/
 
 	userFirstHitAsTime := time.Unix(userFirstHit, 0)
-	return (userFirstHitAsTime.Add(window).UnixMilli() - time.Now().UnixMilli()) / 1000
+	const millisInSecond int64 = 1000
+	return (userFirstHitAsTime.Add(window).UnixMilli() - time.Now().UnixMilli()) / millisInSecond
 }
 
 func hasAMinutePassed(previousInUnix int64) bool {
