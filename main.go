@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
@@ -68,14 +67,6 @@ type FixedWindowEntry struct {
 }
 
 func main() {
-
-	j := internal.RedisEntry{
-		HitCount: 1,
-		FirstHit: 1,
-	}
-
-	fmt.Println(int64(unsafe.Sizeof(j)))
-
 	fmt.Println("Distributed rate limiter, version ", version)
 
 	if globalSettings.Window != 1*time.Minute {
@@ -192,7 +183,6 @@ func isRequestAllowed(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
 	} else if user.Ok() { // user found
-		fmt.Println("1st if")
 		fmt.Println("user found")
 		user.HitCount++
 
