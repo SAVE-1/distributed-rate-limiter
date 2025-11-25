@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // https://www.hellointerview.com/learn/system-design/problem-breakdowns/distributed-rate-limiter
@@ -52,6 +59,7 @@ var (
 		Window:                   1 * time.Minute,
 		RequestsUntilLimit:       2,
 	}
+	logger *zap.Logger
 )
 
 type Settings struct {
@@ -68,6 +76,21 @@ type FixedWindowEntry struct {
 
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
+
+	config := zap.NewProductionConfig()
+	config.OutputPaths = []string{
+		"stdout",
+		"myapp.log",
+	}
+
+	var loggerError error
+	logger, loggerError = config.Build()
+	if loggerError != nil {
+		panic(loggerError)
+	}
+	defer logger.Sync()
+
+	logger.Info("This message will be logged to multiple outputs")
 
 	if globalSettings.Window != 1*time.Minute {
 		fmt.Println("Configuration error, global window must be 1min for now")
@@ -86,8 +109,6 @@ func main() {
 		fmt.Println("REDIS connection success")
 	}
 
-	// defer fmt.Println(internal.CloseRedis())
-
 	if globalSettings.AllowStartupWithoutRedis {
 		// stop the server altogether
 		fmt.Println("Powering down server")
@@ -98,7 +119,7 @@ func main() {
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
-		Cost: internal.GetRedisEntryCostFunction(),
+		Cost:        internal.GetRedisEntryCostFunction(),
 	})
 
 	// this is fatal, internal cache is required in all cases
@@ -110,30 +131,57 @@ func main() {
 
 	defer cache.Close()
 
-	r := gin.Default()
+	router := gin.Default()
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
-
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message":      "feelin' fine!",
-			"health":       "healthy",
-			"health-level": 100,
-			"code":         239, // a custom code, mostly to have it, and as a placeholder I guess, no biggie
-		})
-	})
-
-	// user-facing API
-	r.Group("/v1")
 	{
-		r.POST("/ratelimit", isRequestAllowed)
+		v1 := router.Group("/v1")
+
+		v1.GET("/ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "pong",
+			})
+		})
+
+		v1.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"message":      "feelin' fine!",
+				"health":       "healthy",
+				"health-level": 100,
+				"code":         239, // a custom code, mostly to have it, and as a placeholder I guess, no biggie
+			})
+		})
+
+		v1.POST("/ratelimit", isRequestAllowed)
 	}
 
-	r.Run()
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
+	}
+
+	go func() {
+		log.Println("Starting server on :8080")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Listen error: %s", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	// kill (no params) by default sends syscall.SIGTERM
+	// kill -2 is syscall.SIGINT
+	// kill -9 is syscall.SIGKILL but can't be caught, so don't need add it
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("Forced shutdown: %s", err)
+	}
+
+	log.Println("Server exited gracefully")
 }
 
 // message from the web client
@@ -144,19 +192,21 @@ type IncomingMessage struct {
 
 func (i IncomingMessage) String() string {
 	var b strings.Builder
-    b.Grow(128) // preallocate enough
+	b.Grow(128) // preallocate enough
 
-    b.WriteString("[ client-id: ")
-    b.WriteString(i.ClientId)
-    b.WriteString(", rules-id: ")
-    b.WriteString(i.RulesId)
-    b.WriteString(" ]")
+	b.WriteString("[ client-id: ")
+	b.WriteString(i.ClientId)
+	b.WriteString(", rules-id: ")
+	b.WriteString(i.RulesId)
+	b.WriteString(" ]")
 
 	return b.String()
 }
 
 // isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
 func isRequestAllowed(c *gin.Context) {
+	const useRistrettoCostCalc int64 = 0
+
 	var message IncomingMessage
 
 	userId := ""
@@ -164,8 +214,8 @@ func isRequestAllowed(c *gin.Context) {
 	if err := c.ShouldBindJSON(&message); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
 		return
-	} 
-	
+	}
+
 	userId = message.ClientId
 
 	fmt.Println(message)
@@ -192,36 +242,36 @@ func isRequestAllowed(c *gin.Context) {
 			user.HitCount = 1
 
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			const cost int64 = 1
-			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
-			ristrettoCache.Wait()
+			// const cost int64 = 1
 
-			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
-			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
-			c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
+			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
 				"title":  "Rate limit OK",
 				"detail": "Rate limit OK.",
 			})
-
+			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
+			ristrettoCache.Wait()
 		} else if globalSettings.RequestsUntilLimit < user.HitCount {
 			fmt.Println("2nd if")
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
-			c.Writer.Header().Set("RateLimit-Remaining", string(0)) // compiler is gonna optimize this to "0", but I'm keeping it as string(0) for consistencys sake
-			c.Writer.Header().Set("RateLimit-Reset", string(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window)))
-			c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
-			c.JSON(http.StatusOK, gin.H{
+
+			setRatelimitSpecificHeaders(c, user, globalSettings)
+			c.JSON(http.StatusTooManyRequests, gin.H{
 				"title":  "Rate limit exceeded",
 				"detail": "Too many requests in a given amount of time, please try again later.",
 			})
 
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
+			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
 			ristrettoCache.Wait()
 		} else {
 			fmt.Println("3rd if")
+			setRatelimitSpecificHeaders(c, user, globalSettings)
+			c.JSON(http.StatusOK, gin.H{
+				"title":  "Rate limit ok",
+				"detail": "Rate limit not exceeded",
+			})
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			ristrettoCache.SetWithTTL(requestUserHash, user, 0, globalSettings.Window)
+			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
 			ristrettoCache.Wait()
 		}
 	} else { // no user found
@@ -237,20 +287,34 @@ func isRequestAllowed(c *gin.Context) {
 		if err != nil {
 			fmt.Println("REDIS error:", err)
 		} else {
-			fmt.Printf("REDIS HSet success")
+			fmt.Println("REDIS HSet success")
 		}
 
-		ristrettoCache.SetWithTTL(requestUserHash, entry, 0, globalSettings.Window)
+		ristrettoCache.SetWithTTL(requestUserHash, entry, useRistrettoCostCalc, globalSettings.Window)
 		ristrettoCache.Wait() // wait for value to pass through buffers
 
-		c.Writer.Header().Set("RateLimit-Remaining", string(globalSettings.RequestsUntilLimit-entry.HitCount))
+		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(globalSettings.RequestsUntilLimit-entry.HitCount, 10))
 		c.Writer.Header().Set("RateLimit-Reset", _time.Add(globalSettings.Window).String())
-		c.Writer.Header().Set("RateLimit-Limit", string(globalSettings.RequestsUntilLimit))
+		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.RequestsUntilLimit, 10))
 		c.JSON(http.StatusOK, gin.H{
 			"title":  "Rate limit ok",
 			"detail": "Rate limit ok",
 		})
 	}
+}
+
+func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings Settings) {
+	var remaining int64 = -1
+	if settings.RequestsUntilLimit-user.HitCount < 0 {
+		remaining = 0
+	} else {
+		remaining = settings.RequestsUntilLimit - user.HitCount
+	}
+
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(remaining, 10))
+	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window), 10))
+	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.RequestsUntilLimit, 10))
 }
 
 func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 {
