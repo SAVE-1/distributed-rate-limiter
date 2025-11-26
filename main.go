@@ -249,8 +249,6 @@ func isRequestAllowed(c *gin.Context) {
 				"title":  "Rate limit OK",
 				"detail": "Rate limit OK.",
 			})
-			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
-			ristrettoCache.Wait()
 		} else if globalSettings.RequestsUntilLimit < user.HitCount {
 			fmt.Println("2nd if")
 
@@ -261,8 +259,6 @@ func isRequestAllowed(c *gin.Context) {
 			})
 
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
-			ristrettoCache.Wait()
 		} else {
 			fmt.Println("3rd if")
 			setRatelimitSpecificHeaders(c, user, globalSettings)
@@ -271,36 +267,32 @@ func isRequestAllowed(c *gin.Context) {
 				"detail": "Rate limit not exceeded",
 			})
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
-			ristrettoCache.Wait()
 		}
 	} else { // no user found
 		fmt.Println("Hash does not exist")
 		_time := time.Now()
-		entry := internal.RedisEntry{
+		user = internal.RedisEntry{
 			HitCount: 1,
 			FirstHit: _time.Unix(),
 		}
 
-		err := internal.AddHashToRedis(requestUserHash, entry, globalSettings.Window)
+		err := internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 
 		if err != nil {
 			fmt.Println("REDIS error:", err)
 		} else {
 			fmt.Println("REDIS HSet success")
 		}
-
-		ristrettoCache.SetWithTTL(requestUserHash, entry, useRistrettoCostCalc, globalSettings.Window)
-		ristrettoCache.Wait() // wait for value to pass through buffers
-
-		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(globalSettings.RequestsUntilLimit-entry.HitCount, 10))
-		c.Writer.Header().Set("RateLimit-Reset", _time.Add(globalSettings.Window).String())
-		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.RequestsUntilLimit, 10))
+		
+		setRatelimitSpecificHeaders(c, user, globalSettings)
 		c.JSON(http.StatusOK, gin.H{
 			"title":  "Rate limit ok",
 			"detail": "Rate limit ok",
 		})
 	}
+
+	ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
+	ristrettoCache.Wait()
 }
 
 func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings Settings) {
