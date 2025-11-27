@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-)
-
-var (
-	redisClient *redis.Client
+	"go.uber.org/zap"
 )
 
 type RedisEntry struct {
@@ -24,20 +21,38 @@ func (i RedisEntry) Ok() bool {
 	return i.ok
 }
 
+type RedisConnection struct {
+	Address     string
+	Username    string
+	Password    string
+	Logger      *zap.Logger
+	RedisClient *redis.Client
+}
+
+func NewRedisConnection(address, username, password string, logger *zap.Logger) *RedisConnection {
+	return &RedisConnection{
+		Address:     address,
+		Username:    username,
+		Password:    password,
+		Logger:      logger,
+		RedisClient: nil,
+	}
+}
+
 func (i RedisEntry) String() string {
 	var b strings.Builder
-    b.Grow(128) // preallocate enough
+	b.Grow(128) // preallocate enough
 
-    b.WriteString("[ hit-count: ")
-    b.WriteString(strconv.FormatInt(i.HitCount, 10))
-    b.WriteString(", first-hit: ")
-    b.WriteString(strconv.FormatInt(i.FirstHit, 10))
-    b.WriteString(" ]")
+	b.WriteString("[ hit-count: ")
+	b.WriteString(strconv.FormatInt(i.HitCount, 10))
+	b.WriteString(", first-hit: ")
+	b.WriteString(strconv.FormatInt(i.FirstHit, 10))
+	b.WriteString(" ]")
 
 	return b.String()
 }
 
-func GetRedisEntryCostFunction() func(value RedisEntry) int64 {
+func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int64 {
 	return func(value RedisEntry) int64 {
 		/*
 			a more futureproof version would be
@@ -59,32 +74,33 @@ func GetRedisEntryCostFunction() func(value RedisEntry) int64 {
 	}
 }
 
-func InitRedis(address string, username string, password string) error {
+func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 	// these will be moved into environment vars in the future
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     address,
-		Username: username, // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
-		Password: password, // use your Redis password
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     r.Address,
+		Username: r.Username, // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
+		Password: r.Password, // use your Redis password
 	})
 	ctx := context.Background()
 
 	_, err := redisClient.Ping(ctx).Result()
 
 	if err != nil {
-		return err
+		r.Logger.Error("REDIS initialization error", zap.Error(err))
+		return nil, err
 	}
 
-	return nil
+	return redisClient, nil
 }
 
-func CloseRedis() error {
-	return redisClient.Close()
+func (h *RedisConnection) CloseRedis() error {
+	return h.RedisClient.Close()
 }
 
-func AddHashToRedis(hash string, fields RedisEntry, expiration time.Duration) error {
+func (h *RedisConnection) AddHashToRedis(hash string, fields RedisEntry, expiration time.Duration) error {
 	ctx := context.Background()
 
-	pipe := redisClient.Pipeline()
+	pipe := h.RedisClient.Pipeline()
 	pipe.HSet(ctx, hash, "hitcount", strconv.FormatInt(fields.HitCount, 10))
 	pipe.HSet(ctx, hash, "firsthit", strconv.FormatInt(fields.FirstHit, 10))
 	pipe.Expire(ctx, hash, expiration)
@@ -104,12 +120,13 @@ func AddHashToRedis(hash string, fields RedisEntry, expiration time.Duration) er
 //
 // If there is an error fetching the hash from Redis, the error is returned
 // and the RedisEntry is empty.
-func GetHashFromRedis(hash string) (RedisEntry, error) {
+func (h *RedisConnection) GetHashFromRedis(hash string) (RedisEntry, error) {
 	ctx := context.Background()
-	val, hgetErr := redisClient.HGetAll(ctx, hash).Result()
+	val, hgetErr := h.RedisClient.HGetAll(ctx, hash).Result()
 	fmt.Println("hgetErr:", hgetErr)
 	fmt.Println("vals:", val)
 	if hgetErr != nil {
+		h.Logger.Error("REDIS error", zap.Error(hgetErr))
 		return RedisEntry{}, hgetErr
 	}
 

@@ -59,7 +59,6 @@ var (
 		Window:                   1 * time.Minute,
 		RequestsUntilLimit:       2,
 	}
-	logger *zap.Logger
 )
 
 type Settings struct {
@@ -77,41 +76,36 @@ type FixedWindowEntry struct {
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
 
-	config := zap.NewProductionConfig()
-	config.OutputPaths = []string{
-		"stdout",
-		"myapp.log",
-	}
-
-	var loggerError error
-	logger, loggerError = config.Build()
-	if loggerError != nil {
-		panic(loggerError)
-	}
-	defer logger.Sync()
-
-	logger.Info("This message will be logged to multiple outputs")
-
-	if globalSettings.Window != 1*time.Minute {
-		fmt.Println("Configuration error, global window must be 1min for now")
-		return
-	}
+	logger, _ := zap.NewProduction()
 
 	address := "127.0.0.1:6379"
 	username := "default"
 	password := "mypassword"
 
-	redisConnectionError := internal.InitRedis(address, username, password)
+	redisConnection := internal.NewRedisConnection(address, username, password, logger)
+
+	client, redisConnectionError := internal.OpenRedisConnection(redisConnection)
 
 	if redisConnectionError != nil {
 		fmt.Println(redisConnectionError)
+		logger.Info("Error connecting to redis", zap.Error(redisConnectionError))
+		return
 	} else {
 		fmt.Println("REDIS connection success")
 	}
 
+	redisConnection.RedisClient = client
+
 	if globalSettings.AllowStartupWithoutRedis {
 		// stop the server altogether
-		fmt.Println("Powering down server")
+		logger.Info("Powering down server, REDIS is required")
+		return
+	}
+
+	h := NewHandler(logger, *redisConnection)
+
+	if globalSettings.Window != 1*time.Minute {
+		logger.Info("Configuration error, global window must be 1min for now")
 		return
 	}
 
@@ -119,14 +113,12 @@ func main() {
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
-		Cost:        internal.GetRedisEntryCostFunction(),
+		Cost:        redisConnection.GetRedisEntryCostFunction(),
 	})
 
 	// this is fatal, internal cache is required in all cases
 	if ristrettoInitError != nil {
-		fmt.Println("Fatal, unable to init internal cache:", ristrettoInitError)
-		fmt.Println("Powering down server")
-		return
+		logger.Fatal("Fatal, unable to init internal cache, powering down rate limiter", zap.Error(ristrettoInitError))
 	}
 
 	defer cache.Close()
@@ -136,22 +128,11 @@ func main() {
 	{
 		v1 := router.Group("/v1")
 
-		v1.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "pong",
-			})
-		})
+		v1.GET("/ping", h.ping)
 
-		v1.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message":      "feelin' fine!",
-				"health":       "healthy",
-				"health-level": 100,
-				"code":         239, // a custom code, mostly to have it, and as a placeholder I guess, no biggie
-			})
-		})
+		v1.GET("/health", h.health)
 
-		v1.POST("/ratelimit", isRequestAllowed)
+		v1.POST("/ratelimit", h.isRequestAllowed)
 	}
 
 	server := &http.Server{
@@ -162,7 +143,7 @@ func main() {
 	go func() {
 		log.Println("Starting server on :8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Listen error: %s", err)
+			logger.Fatal("Listen error", zap.Error(err))
 		}
 	}()
 
@@ -178,7 +159,7 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Forced shutdown: %s", err)
+		logger.Fatal("Forced shutdown", zap.Error(err))
 	}
 
 	log.Println("Server exited gracefully")
@@ -203,8 +184,35 @@ func (i IncomingMessage) String() string {
 	return b.String()
 }
 
+type Handler struct {
+	Logger          *zap.Logger
+	RedisConnection internal.RedisConnection
+}
+
+func NewHandler(logger *zap.Logger, conn internal.RedisConnection) *Handler {
+	return &Handler{
+		Logger:          logger,
+		RedisConnection: conn,
+	}
+}
+
+func (h *Handler) ping(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "pong",
+	})
+}
+
+func (h *Handler) health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "feelin' fine!",
+		"health":       "healthy",
+		"health-level": 100,
+		"code":         239, // a custom code, mostly to have it, and as a placeholder I guess, no biggie
+	})
+}
+
 // isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
-func isRequestAllowed(c *gin.Context) {
+func (h *Handler) isRequestAllowed(c *gin.Context) {
 	const useRistrettoCostCalc int64 = 0
 
 	var message IncomingMessage
@@ -226,10 +234,10 @@ func isRequestAllowed(c *gin.Context) {
 
 	fmt.Println("requestUserHash: ", requestUserHash)
 
-	user, redisError := internal.GetHashFromRedis(requestUserHash)
+	user, redisError := h.RedisConnection.GetHashFromRedis(requestUserHash)
 
 	if redisError != nil { // error with REDIS
-		fmt.Println("error fetching from redis")
+		h.Logger.Error("error fetching from redis", zap.Error(redisError))
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
 	} else if user.Ok() { // user found
@@ -239,10 +247,10 @@ func isRequestAllowed(c *gin.Context) {
 		fmt.Println("user", user)
 
 		if hasAMinutePassed(user.FirstHit) {
+			fmt.Println("1st if -- hasAMinutePassed")
 			user.HitCount = 1
 
-			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
-			// const cost int64 = 1
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
@@ -250,7 +258,7 @@ func isRequestAllowed(c *gin.Context) {
 				"detail": "Rate limit OK.",
 			})
 		} else if globalSettings.RequestsUntilLimit < user.HitCount {
-			fmt.Println("2nd if")
+			fmt.Println("2nd if -- hasAMinutePassed")
 
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusTooManyRequests, gin.H{
@@ -258,16 +266,16 @@ func isRequestAllowed(c *gin.Context) {
 				"detail": "Too many requests in a given amount of time, please try again later.",
 			})
 
-			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 		} else {
 			fmt.Println("3rd if -- hasAMinutePassed")
-			user.HitCount++
+
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
 				"title":  "Rate limit ok",
 				"detail": "Rate limit not exceeded",
 			})
-			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 		}
 	} else { // no user found
 		fmt.Println("Hash does not exist")
@@ -277,14 +285,14 @@ func isRequestAllowed(c *gin.Context) {
 			FirstHit: _time.Unix(),
 		}
 
-		err := internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+		err := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 
 		if err != nil {
 			fmt.Println("REDIS error:", err)
 		} else {
 			fmt.Println("REDIS HSet success")
 		}
-		
+
 		setRatelimitSpecificHeaders(c, user, globalSettings)
 		c.JSON(http.StatusOK, gin.H{
 			"title":  "Rate limit ok",
