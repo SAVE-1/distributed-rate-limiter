@@ -260,7 +260,8 @@ func isRequestAllowed(c *gin.Context) {
 
 			internal.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 		} else {
-			fmt.Println("3rd if")
+			fmt.Println("3rd if -- hasAMinutePassed")
+			user.HitCount++
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
 				"title":  "Rate limit ok",
