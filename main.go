@@ -31,7 +31,7 @@ LIMITATIONS:
 FOR NOW:
 	if the REDIS cache instance is down,
 	the internal cache will be updated, but once REDIS is back up again,
-	the REDIS cache WILL NOT BE updated against the internal cache, but I suppose it is okay'ish in this case
+	the REDIS cache will not be updated against the internal cache, but I suppose it is okay'ish in this case
 	as the data is not mission critical, and the data velocity should be pretty high as well
 
 	it does mean the rate limiting -rate is going to be somewhat lower in some cases though,
