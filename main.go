@@ -52,7 +52,7 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 */
 
 var (
-	version        = "0.2"
+	version        = "0.3"
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
 	globalSettings = Settings{
 		AllowStartupWithoutRedis: false,
@@ -76,7 +76,23 @@ type FixedWindowEntry struct {
 func main() {
 	fmt.Println("Distributed rate limiter, version ", version)
 
-	logger, _ := zap.NewProduction()
+	config := zap.Config{
+		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
+		Development:      false,
+		Encoding:         "json",
+		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+		OutputPaths:      []string{"stdout", "rate-limiter.log"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+
+	logger, err := config.Build()
+	if err != nil {
+		panic(err)
+	}
+
+	defer logger.Sync()
+
+	logger.Info("Custom logger initialized")
 
 	address := "127.0.0.1:6379"
 	username := "default"
@@ -87,25 +103,24 @@ func main() {
 	client, redisConnectionError := internal.OpenRedisConnection(redisConnection)
 
 	if redisConnectionError != nil {
-		fmt.Println(redisConnectionError)
-		logger.Info("Error connecting to redis", zap.Error(redisConnectionError))
+		logger.Error("Error connecting to redis", zap.Error(redisConnectionError))
 		return
 	} else {
-		fmt.Println("REDIS connection success")
+		logger.Info("Connected to REDIS instance successfully")
 	}
 
 	redisConnection.RedisClient = client
 
 	if globalSettings.AllowStartupWithoutRedis {
 		// stop the server altogether
-		logger.Info("Powering down server, REDIS is required")
+		logger.Error("Shutting down rate limiter, REDIS is required")
 		return
 	}
 
 	h := NewHandler(logger, *redisConnection)
 
 	if globalSettings.Window != 1*time.Minute {
-		logger.Info("Configuration error, global window must be 1min for now")
+		logger.Error("Configuration error - global window must be 1min for now")
 		return
 	}
 
@@ -118,7 +133,8 @@ func main() {
 
 	// this is fatal, internal cache is required in all cases
 	if ristrettoInitError != nil {
-		logger.Fatal("Fatal, unable to init internal cache, powering down rate limiter", zap.Error(ristrettoInitError))
+		logger.Error("Internal error, unable to init internal cache, shutting down rate limiter", zap.Error(ristrettoInitError))
+		return
 	}
 
 	defer cache.Close()
@@ -143,7 +159,7 @@ func main() {
 	go func() {
 		log.Println("Starting server on :8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("Listen error", zap.Error(err))
+			logger.Error("Listen error", zap.Error(err))
 		}
 	}()
 
@@ -153,7 +169,7 @@ func main() {
 	// kill -9 is syscall.SIGKILL but can't be caught, so don't need add it
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutdown signal received")
+	logger.Info("Shutdown signal received")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -162,7 +178,7 @@ func main() {
 		logger.Fatal("Forced shutdown", zap.Error(err))
 	}
 
-	log.Println("Server exited gracefully")
+	logger.Info("Server exited gracefully")
 }
 
 // message from the web client
@@ -248,7 +264,7 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 		if hasAMinutePassed(user.FirstHit) {
 			fmt.Println("1st if -- hasAMinutePassed")
-			user.HitCount = 1
+			user.Reset()
 
 			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
 

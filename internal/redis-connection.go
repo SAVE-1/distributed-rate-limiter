@@ -2,7 +2,6 @@ package internal
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +18,11 @@ type RedisEntry struct {
 
 func (i RedisEntry) Ok() bool {
 	return i.ok
+}
+
+func (i *RedisEntry) Reset() {
+	i.HitCount = 1
+	i.FirstHit = time.Now().Unix()
 }
 
 type RedisConnection struct {
@@ -90,6 +94,8 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 		return nil, err
 	}
 
+	r.Logger.Info("No error with REDIS initialization")
+
 	return redisClient, nil
 }
 
@@ -123,10 +129,8 @@ func (h *RedisConnection) AddHashToRedis(hash string, fields RedisEntry, expirat
 func (h *RedisConnection) GetHashFromRedis(hash string) (RedisEntry, error) {
 	ctx := context.Background()
 	val, hgetErr := h.RedisClient.HGetAll(ctx, hash).Result()
-	fmt.Println("hgetErr:", hgetErr)
-	fmt.Println("vals:", val)
 	if hgetErr != nil {
-		h.Logger.Error("REDIS error", zap.Error(hgetErr))
+		h.Logger.Error("REDIS library error with HGetAll", zap.Error(hgetErr))
 		return RedisEntry{}, hgetErr
 	}
 
