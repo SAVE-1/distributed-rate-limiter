@@ -18,11 +18,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// https://www.hellointerview.com/learn/system-design/problem-breakdowns/distributed-rate-limiter
-
-// A rate limiter is an infrastructure component that other services call
-// to check if a request should be allowed.
-
 /*
 
 LIMITATIONS:
