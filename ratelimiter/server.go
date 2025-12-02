@@ -19,14 +19,13 @@ import (
 	"go.uber.org/zap"
 )
 
-
 var (
-	version        = "0.3"
+	version        = "0.4"
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
 	globalSettings = Settings{
 		AllowStartupWithoutRedis: false,
 		Window:                   1 * time.Minute,
-		RequestsUntilLimit:       2,
+		RequestsUntilLimit:       100,
 	}
 )
 
@@ -43,13 +42,33 @@ type FixedWindowEntry struct {
 }
 
 type RateLimiterConfiguration struct {
-	RedisAddress string
-	RedisUsername string
-	RedisPassword string
+	RedisAddress             string
+	RedisUsername            string
+	RedisPassword            string
+	Window                   time.Duration
+	RequestsUntilLimit       int64
+	AllowStartupWithoutRedis bool
 }
 
 func Start(ratelimiterConfig RateLimiterConfiguration) error {
-	fmt.Println("Distributed rate limiter, version ", version)
+	fmt.Println("Distributed rate limiter, version", version)
+
+	if ratelimiterConfig.Window != 0 {
+		globalSettings.Window = ratelimiterConfig.Window
+	}
+
+	if ratelimiterConfig.RequestsUntilLimit != 0 {
+		globalSettings.RequestsUntilLimit = ratelimiterConfig.RequestsUntilLimit
+	}
+
+	if ratelimiterConfig.AllowStartupWithoutRedis != false {
+		fmt.Println("hep")
+		globalSettings.AllowStartupWithoutRedis = ratelimiterConfig.AllowStartupWithoutRedis
+	}
+
+	fmt.Println("Allow startupt without REDIS:", globalSettings.AllowStartupWithoutRedis)
+	fmt.Println("Request window:", globalSettings.Window)
+	fmt.Println("Requests until limit:", globalSettings.RequestsUntilLimit)
 
 	config := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
@@ -79,18 +98,16 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	if redisConnectionError != nil {
 		logger.Error("Error connecting to redis", zap.Error(redisConnectionError))
-		return redisConnectionError
+		if !globalSettings.AllowStartupWithoutRedis {
+			// stop the server altogether
+			logger.Error("Shutting down rate limiter, REDIS is required")
+			return errors.Join(errors.New("Startup not allowed without REDIS"), redisConnectionError)
+		}
 	} else {
 		logger.Info("Connected to REDIS instance successfully")
 	}
 
 	redisConnection.RedisClient = client
-
-	if globalSettings.AllowStartupWithoutRedis {
-		// stop the server altogether
-		logger.Error("Shutting down rate limiter, REDIS is required")
-		return errors.New("Startup not allowed without REDIS")
-	}
 
 	h := NewHandler(logger, *redisConnection)
 
@@ -156,7 +173,6 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	logger.Info("Server exited gracefully")
 	return nil
 }
-
 
 // message from the web client
 type IncomingMessage struct {

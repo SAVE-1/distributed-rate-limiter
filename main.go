@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/SAVE-1/distributed-rate-limiter/ratelimiter"
 )
@@ -36,11 +37,14 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 
 func main() {
 	config := ratelimiter.RateLimiterConfiguration{
-		RedisAddress:  "127.0.0.1:6379",
-		RedisUsername: "default",
-		RedisPassword: "mypassword",
+		RedisAddress:             "127.0.0.1:6379",
+		RedisUsername:            "default",
+		RedisPassword:            "mypassword",
+		Window:                   1 * time.Minute,
+		RequestsUntilLimit:       2,
+		AllowStartupWithoutRedis: false,
 	}
-	
+
 	if err := ratelimiter.Start(config); err != nil {
 		fmt.Println(err)
 	}
