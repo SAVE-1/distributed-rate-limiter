@@ -111,7 +111,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	h := NewHandler(logger, *redisConnection)
 
-	if globalSettings.Window != 1*time.Minute {
+	if globalSettings.Period != 1*time.Minute {
 		logger.Error("Configuration error - global window must be 1min for now")
 		return errors.New("Startup not allowed with a limit other than 1min")
 	}
@@ -255,36 +255,47 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 		fmt.Println("user", user)
 
-		if hasAMinutePassed(user.FirstHit) {
+		if hasAMinutePassed(user.FirstHit) { // ok
 			fmt.Println("1st if -- hasAMinutePassed")
 			user.Reset()
 
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
+			t := timeUntil(user.FirstHit)
 
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
-				"title":  "Rate limit OK",
-				"detail": "Rate limit OK.",
+				"passes":     true,
+				"reset_unix": t.Unix(),
+				"reset_iso":  t.Format(time.RFC3339),
+				"limit":      globalSettings.Limit,
+				"remaining":  globalSettings.Limit - user.HitCount,
 			})
-		} else if globalSettings.RequestsUntilLimit < user.HitCount {
+		} else if globalSettings.Limit < user.HitCount { // too many requests
 			fmt.Println("2nd if -- hasAMinutePassed")
+			t := timeUntil(user.FirstHit)
 
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"title":  "Rate limit exceeded",
-				"detail": "Too many requests in a given amount of time, please try again later.",
+				"passes":     false,
+				"reset_unix": t.Unix(),
+				"reset_iso":  t.Format(time.RFC3339),
+				"limit":      globalSettings.Limit,
+				"remaining":  0, // 0, we don't want to show minus counts
 			})
 
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
 		} else {
 			fmt.Println("3rd if -- hasAMinutePassed")
-
+			t := timeUntil(user.FirstHit)
 			setRatelimitSpecificHeaders(c, user, globalSettings)
 			c.JSON(http.StatusOK, gin.H{
-				"title":  "Rate limit ok",
-				"detail": "Rate limit not exceeded",
+				"passes":     true,
+				"reset_unix": t.Unix(),
+				"reset_iso":  t.Format(time.RFC3339),
+				"limit":      globalSettings.Limit,
+				"remaining":  globalSettings.Limit - user.HitCount,
 			})
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
 		}
 	} else { // no user found
 		fmt.Println("Hash does not exist")
@@ -294,7 +305,7 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 			FirstHit: _time.Unix(),
 		}
 
-		err := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Window)
+		err := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
 
 		if err != nil {
 			fmt.Println("REDIS error:", err)
@@ -303,28 +314,36 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		}
 
 		setRatelimitSpecificHeaders(c, user, globalSettings)
+		t := timeUntil(user.FirstHit)
 		c.JSON(http.StatusOK, gin.H{
-			"title":  "Rate limit ok",
-			"detail": "Rate limit ok",
+			"passes":     true,
+			"reset_unix": t.Unix(),
+			"reset_iso":  t.Format(time.RFC3339),
+			"limit":      globalSettings.Limit,
+			"remaining":  globalSettings.Limit - user.HitCount,
 		})
 	}
 
-	ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Window)
+	ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Period)
 	ristrettoCache.Wait()
+}
+
+func timeUntil(t int64) time.Time {
+	return time.Unix(t+60, 0)
 }
 
 func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings Settings) {
 	var remaining int64 = -1
-	if settings.RequestsUntilLimit-user.HitCount < 0 {
+	if settings.Limit-user.HitCount < 0 {
 		remaining = 0
 	} else {
-		remaining = settings.RequestsUntilLimit - user.HitCount
+		remaining = settings.Limit - user.HitCount
 	}
 
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Window), 10))
-	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.RequestsUntilLimit, 10))
+	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Period), 10))
+	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
 }
 
 func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 {

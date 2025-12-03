@@ -56,6 +56,7 @@ func (i RedisEntry) String() string {
 	return b.String()
 }
 
+// returns the byte count, or the cost, of internal.RedisEntry -struct
 func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int64 {
 	return func(value RedisEntry) int64 {
 		/*
@@ -78,6 +79,7 @@ func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int
 	}
 }
 
+// opens a redis connection
 func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 	// these will be moved into environment vars in the future
 	redisClient := redis.NewClient(&redis.Options{
@@ -103,6 +105,8 @@ func (h *RedisConnection) CloseRedis() error {
 	return h.RedisClient.Close()
 }
 
+
+// adds a hash with the name of hash to the redis instance
 func (h *RedisConnection) AddHashToRedis(hash string, fields RedisEntry, expiration time.Duration) error {
 	ctx := context.Background()
 
