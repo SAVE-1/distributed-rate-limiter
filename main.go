@@ -40,8 +40,8 @@ func main() {
 		RedisAddress:             "127.0.0.1:6379",
 		RedisUsername:            "default",
 		RedisPassword:            "mypassword",
-		Window:                   1 * time.Minute,
-		RequestsUntilLimit:       2,
+		Period:                   1 * time.Minute,
+		Limit:                    2,
 		AllowStartupWithoutRedis: false,
 	}
 

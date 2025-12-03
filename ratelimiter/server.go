@@ -24,15 +24,15 @@ var (
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
 	globalSettings = Settings{
 		AllowStartupWithoutRedis: false,
-		Window:                   1 * time.Minute,
-		RequestsUntilLimit:       100,
+		Period:                   1 * time.Minute,
+		Limit:                    100,
 	}
 )
 
 type Settings struct {
 	AllowStartupWithoutRedis bool
-	Window                   time.Duration
-	RequestsUntilLimit       int64
+	Period                   time.Duration
+	Limit                    int64
 }
 
 type FixedWindowEntry struct {
@@ -45,20 +45,20 @@ type RateLimiterConfiguration struct {
 	RedisAddress             string
 	RedisUsername            string
 	RedisPassword            string
-	Window                   time.Duration
-	RequestsUntilLimit       int64
+	Period                   time.Duration
+	Limit                    int64
 	AllowStartupWithoutRedis bool
 }
 
 func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	fmt.Println("Distributed rate limiter, version", version)
 
-	if ratelimiterConfig.Window != 0 {
-		globalSettings.Window = ratelimiterConfig.Window
+	if ratelimiterConfig.Period != 0 {
+		globalSettings.Period = ratelimiterConfig.Period
 	}
 
-	if ratelimiterConfig.RequestsUntilLimit != 0 {
-		globalSettings.RequestsUntilLimit = ratelimiterConfig.RequestsUntilLimit
+	if ratelimiterConfig.Limit != 0 {
+		globalSettings.Limit = ratelimiterConfig.Limit
 	}
 
 	if ratelimiterConfig.AllowStartupWithoutRedis != false {
@@ -67,8 +67,8 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	}
 
 	fmt.Println("Allow startupt without REDIS:", globalSettings.AllowStartupWithoutRedis)
-	fmt.Println("Request window:", globalSettings.Window)
-	fmt.Println("Requests until limit:", globalSettings.RequestsUntilLimit)
+	fmt.Println("Request window:", globalSettings.Period)
+	fmt.Println("Requests until limit:", globalSettings.Limit)
 
 	config := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
