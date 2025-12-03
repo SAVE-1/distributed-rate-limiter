@@ -235,97 +235,113 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	userId = message.ClientId
 
-	fmt.Println(message)
-
-	fmt.Println("user id:", userId)
-
 	requestUserHash := "ratelimit:" + userId
 
-	fmt.Println("requestUserHash: ", requestUserHash)
-
 	user, redisError := h.RedisConnection.GetHashFromRedis(requestUserHash)
+
+	var messageToClient MessageToClient
+	var statusCode int
 
 	if redisError != nil { // error with REDIS
 		h.Logger.Error("error fetching from redis", zap.Error(redisError))
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
 	} else if user.Ok() { // user found
-		fmt.Println("user found")
 		user.HitCount++
 
-		fmt.Println("user", user)
-
 		if hasAMinutePassed(user.FirstHit) { // ok
-			fmt.Println("1st if -- hasAMinutePassed")
+			statusCode = http.StatusOK
 			user.Reset()
-
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
 			t := timeUntil(user.FirstHit)
-
-			setRatelimitSpecificHeaders(c, user, globalSettings)
-			c.JSON(http.StatusOK, gin.H{
-				"passes":     true,
-				"reset_unix": t.Unix(),
-				"reset_iso":  t.Format(time.RFC3339),
-				"limit":      globalSettings.Limit,
-				"remaining":  globalSettings.Limit - user.HitCount,
-			})
+			messageToClient = MessageToClient{
+				Passes:    false,
+				ResetUnix: t.Unix(),
+				ResetIso:  t.Format(time.RFC3339),
+				Limit:     globalSettings.Limit,
+				Remaining: globalSettings.Limit - user.HitCount,
+			}
 		} else if globalSettings.Limit < user.HitCount { // too many requests
-			fmt.Println("2nd if -- hasAMinutePassed")
+			statusCode = http.StatusTooManyRequests
 			t := timeUntil(user.FirstHit)
+			messageToClient = MessageToClient{
+				Passes:    false,
+				ResetUnix: t.Unix(),
+				ResetIso:  t.Format(time.RFC3339),
+				Limit:     globalSettings.Limit,
+				Remaining: 0, // 0, we don't want to show minus counts
+			}
 
-			setRatelimitSpecificHeaders(c, user, globalSettings)
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"passes":     false,
-				"reset_unix": t.Unix(),
-				"reset_iso":  t.Format(time.RFC3339),
-				"limit":      globalSettings.Limit,
-				"remaining":  0, // 0, we don't want to show minus counts
-			})
-
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
-		} else {
-			fmt.Println("3rd if -- hasAMinutePassed")
+		} else { // not over the limit, and a minute has not passed
 			t := timeUntil(user.FirstHit)
-			setRatelimitSpecificHeaders(c, user, globalSettings)
-			c.JSON(http.StatusOK, gin.H{
-				"passes":     true,
-				"reset_unix": t.Unix(),
-				"reset_iso":  t.Format(time.RFC3339),
-				"limit":      globalSettings.Limit,
-				"remaining":  globalSettings.Limit - user.HitCount,
-			})
-			h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
+			statusCode = http.StatusOK
+			messageToClient = MessageToClient{
+				Passes:    true,
+				ResetUnix: t.Unix(),
+				ResetIso:  t.Format(time.RFC3339),
+				Limit:     globalSettings.Limit,
+				Remaining: globalSettings.Limit - user.HitCount,
+			}
 		}
 	} else { // no user found
-		fmt.Println("Hash does not exist")
+		statusCode = http.StatusOK
 		_time := time.Now()
 		user = internal.RedisEntry{
 			HitCount: 1,
 			FirstHit: _time.Unix(),
 		}
-
-		err := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
-
-		if err != nil {
-			fmt.Println("REDIS error:", err)
-		} else {
-			fmt.Println("REDIS HSet success")
-		}
-
-		setRatelimitSpecificHeaders(c, user, globalSettings)
 		t := timeUntil(user.FirstHit)
-		c.JSON(http.StatusOK, gin.H{
-			"passes":     true,
-			"reset_unix": t.Unix(),
-			"reset_iso":  t.Format(time.RFC3339),
-			"limit":      globalSettings.Limit,
-			"remaining":  globalSettings.Limit - user.HitCount,
+
+		messageToClient = MessageToClient{
+			Passes:    true,
+			ResetUnix: t.Unix(),
+			ResetIso:  t.Format(time.RFC3339),
+			Limit:     globalSettings.Limit,
+			Remaining: globalSettings.Limit - user.HitCount,
+		}
+	}
+
+	redisInsertErr := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
+
+	if redisInsertErr != nil {
+		fmt.Println("REDIS error:", redisInsertErr)
+	} else {
+		setRatelimitSpecificHeaders(c, user, globalSettings)
+		c.JSON(statusCode, gin.H{
+			"passes":     messageToClient.Passes,
+			"reset_unix": messageToClient.ResetUnix,
+			"reset_iso":  messageToClient.ResetIso,
+			"limit":      messageToClient.Limit,
+			"remaining":  messageToClient.Remaining,
 		})
 	}
 
 	ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Period)
 	ristrettoCache.Wait()
+}
+
+type MessageToClient struct {
+	Passes    bool
+	ResetUnix int64
+	ResetIso  string
+	Limit     int64
+	Remaining int64
+}
+
+func (h *Handler) process(c *gin.Context, user *internal.RedisEntry, requestUserHash *string, message *MessageToClient) {
+	redisInsertErr := h.RedisConnection.AddHashToRedis(*requestUserHash, *user, globalSettings.Period)
+
+	if redisInsertErr != nil {
+
+	} else {
+		setRatelimitSpecificHeaders(c, *user, globalSettings)
+		c.JSON(http.StatusOK, gin.H{
+			"passes":     message.Passes,
+			"reset_unix": message.ResetUnix,
+			"reset_iso":  message.ResetIso,
+			"limit":      message.Limit,
+			"remaining":  message.Remaining,
+		})
+	}
 }
 
 func timeUntil(t int64) time.Time {
