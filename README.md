@@ -11,7 +11,7 @@ There is still plenty to do, such as:
     - For now, the extra roundtrip costs quite a lot of latency, at localhost the latency for now is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
 
 # Requirements
-- Go, version 1.24.5
+- Go, at least version 1.24.5
 - Docker desktop
 ## Nice to have
 - Task, https://taskfile.dev/
