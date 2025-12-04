@@ -53,7 +53,7 @@ or
 {
 	"passes":     bool,
 	"reset_unix": 64-bit integer,
-	"reset_iso":  64-bit integer, as a RFC3339 string,
+	"reset_iso":  64-bit integer as a RFC3339 string,
 	"limit":      64-bit integer,
 	"remaining":  64-bit integer
 }
