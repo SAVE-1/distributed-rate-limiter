@@ -44,7 +44,7 @@ or
 ```
 {
     "ClientId": either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing,
-    "RulesId": to be added
+    "RulesId": to be implemented
 }
 ```
 
