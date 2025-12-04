@@ -43,18 +43,18 @@ or
 
 ```json
 {
-    "ClientId": <either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing>,
-    "RulesId": <to be added>
+    "ClientId": either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing,
+    "RulesId": to be added
 }
 ```
 
 ### What the rate limiter returns to client
 ```json
 {
-	"passes":     <bool>,
-	"reset_unix": <64-bit integer>,
-	"reset_iso":  <64-bit integer, as a RFC3339 string>,
-	"limit":      <64-bit integer>,
-	"remaining":  <64-bit integer>
+	"passes":     bool,
+	"reset_unix": 64-bit integer,
+	"reset_iso":  64-bit integer, as a RFC3339 string,
+	"limit":      64-bit integer,
+	"remaining":  64-bit integer
 }
 ```
