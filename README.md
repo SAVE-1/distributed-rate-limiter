@@ -41,7 +41,7 @@ or
 
 ### What the rate limiter receives from client
 
-```json
+```
 {
     "ClientId": either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing,
     "RulesId": to be added
@@ -49,7 +49,7 @@ or
 ```
 
 ### What the rate limiter returns to client
-```json
+```
 {
 	"passes":     bool,
 	"reset_unix": 64-bit integer,
