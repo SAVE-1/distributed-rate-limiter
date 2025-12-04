@@ -51,10 +51,10 @@ or
 ### What the rate limiter returns to client
 ```
 {
-	"passes":     bool,
-	"reset_unix": 64-bit integer,
-	"reset_iso":  string in RFC3339-format,
-	"limit":      64-bit integer,
-	"remaining":  64-bit integer
+	"passes":     bool, did the request pass,
+	"reset_unix": 64-bit integer, when will the users request limit reset,
+	"reset_iso":  string, reset_unix as a string in RFC3339-format,
+	"limit":      64-bit integer, the servers request limit,
+	"remaining":  64-bit integer, how many requests are remaining
 }
 ```
