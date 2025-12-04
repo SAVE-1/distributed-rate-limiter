@@ -8,7 +8,7 @@ The project is currently work-in-progress
 There is still plenty to do, such as:
 - Better configurations, most of the variables are hard coded
 - A small LUA optimization for atomicity and to avoid roundtrips to REDIS
-    - For now, the extra roundtrip costs quite a lot of latency, at localhost the latency for now is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
+    - For now, the extra roundtrip costs quite a lot, at localhost the latency is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
 
 # Requirements
 - Go, at least version 1.24.5
