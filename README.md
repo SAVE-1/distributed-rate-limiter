@@ -8,10 +8,10 @@ The project is currently work-in-progress
 There is still plenty to do, such as:
 - Better configurations, most of the variables are hard coded
 - A small LUA optimization for atomicity and to avoid roundtrips to REDIS
-    - For now, the extra roundtrip costs quite a lot of latency, at localhost the latency for now is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
+    - For now, the extra roundtrip costs quite a lot, at localhost the latency is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
 
 # Requirements
-- Go, version 1.24.5
+- Go, at least version 1.24.5
 - Docker desktop
 ## Nice to have
 - Task, https://taskfile.dev/
@@ -41,20 +41,20 @@ or
 
 ### What the rate limiter receives from client
 
-```json
+```
 {
-    "ClientId": <either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing>,
-    "RulesId": <to be added>
+    "ClientId": either API-key, user id or ip, it doesn't actually matter right now as the string is used as-is, with no additional processing,
+    "RulesId": to be implemented
 }
 ```
 
 ### What the rate limiter returns to client
-```json
+```
 {
-	"passes":     <bool>,
-	"reset_unix": <64-bit integer>,
-	"reset_iso":  <64-bit integer, as a RFC3339 string>,
-	"limit":      <64-bit integer>,
-	"remaining":  <64-bit integer>
+	"passes":     bool, did the request pass,
+	"reset_unix": 64-bit integer, when will the users request limit reset,
+	"reset_iso":  string, reset_unix as a string in RFC3339-format,
+	"limit":      64-bit integer, the servers request limit,
+	"remaining":  64-bit integer, how many requests are remaining
 }
 ```
