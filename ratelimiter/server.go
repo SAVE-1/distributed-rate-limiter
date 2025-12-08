@@ -243,7 +243,9 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		h.Logger.Error("error fetching from redis", zap.Error(redisError))
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
 		return
-	} else if user.Ok() { // user found
+	}
+
+	if user.Ok() { // user found
 		user.HitCount++
 
 		t := timeUntil(user.FirstHit)
@@ -299,23 +301,6 @@ type MessageToClient struct {
 	ResetIso  string
 	Limit     int64
 	Remaining int64
-}
-
-func (h *Handler) process(c *gin.Context, user *internal.RedisEntry, requestUserHash *string, message *MessageToClient) {
-	redisInsertErr := h.RedisConnection.AddHashToRedis(*requestUserHash, *user, globalSettings.Period)
-
-	if redisInsertErr != nil {
-
-	} else {
-		setRatelimitSpecificHeaders(c, *user, globalSettings)
-		c.JSON(http.StatusOK, gin.H{
-			"passes":     message.Passes,
-			"reset_unix": message.ResetUnix,
-			"reset_iso":  message.ResetIso,
-			"limit":      message.Limit,
-			"remaining":  message.Remaining,
-		})
-	}
 }
 
 func timeUntil(t int64) time.Time {
