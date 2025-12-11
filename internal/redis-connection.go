@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -16,13 +17,22 @@ type RedisEntry struct {
 	ok       bool
 }
 
-func (i RedisEntry) Ok() bool {
+func (i RedisEntry) Found() bool {
 	return i.ok
 }
 
 func (i *RedisEntry) Reset() {
 	i.HitCount = 1
 	i.FirstHit = time.Now().Unix()
+}
+
+// {passes, hitcount, firsthit, remaining}
+type RedisResponse struct {
+	Passes     bool
+	HitCount   int64
+	FirstHit   int64
+	Remaining  int64
+	ResetsUnix int64
 }
 
 type RedisConnection struct {
@@ -55,6 +65,109 @@ func (i RedisEntry) String() string {
 
 	return b.String()
 }
+
+func (h *RedisConnection) ProcessSomething(hashName string, period int, limit int) (RedisResponse, error) {
+	ctx := context.Background()
+	values := []interface{}{period, limit}
+
+	var e RedisResponse
+
+	t, err := tokenBucket.Run(ctx, h.RedisClient, []string{"ratelimiter:abc"}, values...).Result()
+
+	if err != nil {
+		return RedisResponse{}, err
+	}
+
+	values = t.([]interface{})
+
+	// {passes, hitcount, firsthit, remaining}
+	fmt.Println(values)
+
+	passes, ok := values[0].(bool)
+	if !ok {
+		fmt.Println("2.")
+	}
+
+	hitCount, ok := values[1].(int64)
+	if !ok {
+		fmt.Println("3.")
+	}
+
+	firstHit, ok := values[2].(int64)
+	if !ok {
+		fmt.Println("4.")
+	}
+
+	remaining, ok := values[3].(int64)
+	if !ok {
+		fmt.Println("5.")
+	}
+
+	e.Passes = passes
+	e.HitCount = hitCount
+	e.FirstHit = firstHit
+	e.Remaining = remaining
+
+	return e, nil
+}
+
+// https://redis.uptrace.dev/guide/lua-scripting.html#redis-script
+// https://github.com/go-redis/redis_rate/blob/v9/rate.go
+// https://github.com/go-redis/redis_rate/blob/v9/lua.go
+var tokenBucket = redis.NewScript(`
+-- KEYS[1] = hash key (e.g. ratelimit:abc-123)
+-- ARGV[1] = period in seconds (e.g. 60)
+-- ARGV[2] = limit (max hits per period)
+-- Script returns: {passes, hitcount, firsthit, remaining}
+
+
+redis.replicate_commands()
+
+local key = KEYS[1]
+local period = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local now = redis.call('TIME')
+local nowSeconds = tonumber(now[1])
+
+local hitcount
+local firsthit
+
+if redis.call('EXISTS', key) == 1 then
+    local data = redis.call('HMGET', key, 'hitcount', 'firsthit')
+    hitcount = tonumber(data[1]) or 0
+    firsthit = tonumber(data[2]) or nowSeconds
+
+    if nowSeconds - firsthit >= period then
+        hitcount = 1
+        firsthit = nowSeconds
+    else
+        hitcount = hitcount + 1
+    end
+else
+    hitcount = 1
+    firsthit = nowSeconds
+end
+
+local passes = 1
+local remaining = limit - hitcount
+
+if hitcount > limit then
+    passes = 0
+    remaining = 0
+end
+
+redis.call('HMSET', key, 'hitcount', hitcount, 'firsthit', firsthit)
+
+local remaining_ttl = firsthit + period - nowSeconds
+
+if remaining_ttl > 0 then
+     redis.call('EXPIRE', key, remaining_ttl)
+else
+    redis.call('EXPIRE', key, period)
+end
+    
+return {passes, hitcount, firsthit, remaining}
+`)
 
 // returns the byte count, or the cost, of internal.RedisEntry -struct
 func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int64 {
@@ -104,7 +217,6 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 func (h *RedisConnection) CloseRedis() error {
 	return h.RedisClient.Close()
 }
-
 
 // adds a hash with the name of hash to the redis instance
 func (h *RedisConnection) AddHashToRedis(hash string, fields RedisEntry, expiration time.Duration) error {

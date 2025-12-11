@@ -22,7 +22,7 @@ import (
 var (
 	version        = "0.4"
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
-	globalSettings = Settings{
+	globalSettings = RateLimiterConfiguration{
 		AllowStartupWithoutRedis: false,
 		Period:                   1 * time.Minute,
 		Limit:                    100,
@@ -62,7 +62,6 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	}
 
 	if ratelimiterConfig.AllowStartupWithoutRedis != false {
-		fmt.Println("hep")
 		globalSettings.AllowStartupWithoutRedis = ratelimiterConfig.AllowStartupWithoutRedis
 	}
 
@@ -224,7 +223,6 @@ func (h *Handler) health(c *gin.Context) {
 func (h *Handler) isRequestAllowed(c *gin.Context) {
 	const useRistrettoCostCalc int64 = 0
 	var messageFromClient IncomingMessage
-	var messageToClient MessageToClient
 	var statusCode int
 	var userId string
 
@@ -237,61 +235,40 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	requestUserHash := "ratelimit:" + userId
 
-	user, redisError := h.RedisConnection.GetHashFromRedis(requestUserHash)
+	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period), int(globalSettings.Limit))
 
-	if redisError != nil { // error with REDIS
-		h.Logger.Error("error fetching from redis", zap.Error(redisError))
-		c.JSON(http.StatusInternalServerError, gin.H{"Error": redisError})
-		return
-	}
-
-	if user.Ok() { // user found
-		user.HitCount++
-
-		t := timeUntil(user.FirstHit)
-		messageToClient = MessageToClient{
-			Passes:    true,
-			ResetUnix: t.Unix(),
-			ResetIso:  t.Format(time.RFC3339),
-			Limit:     globalSettings.Limit,
-			Remaining: globalSettings.Limit - user.HitCount,
-		}
-
-		if hasAMinutePassed(user.FirstHit) { // ok
-			statusCode = http.StatusOK
-			user.Reset()
-		} else if globalSettings.Limit < user.HitCount { // too many requests
-			statusCode = http.StatusTooManyRequests
-			messageToClient.Passes = false
-			messageToClient.Remaining = 0
-		} else { // not over the limit, and a minute has not passed
-			statusCode = http.StatusOK
-		}
-	} else { // no user found
-		statusCode = http.StatusOK
-		user = internal.RedisEntry{
-			HitCount: 1,
-			FirstHit: time.Now().Unix(),
-		}
-	}
-
-	redisInsertErr := h.RedisConnection.AddHashToRedis(requestUserHash, user, globalSettings.Period)
-
-	if redisInsertErr != nil {
-		h.Logger.Error("REDIS error:", zap.Error(redisInsertErr))
+	if err != nil {
+		h.Logger.Error("REDIS error:", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, nil)
 	} else {
-		setRatelimitSpecificHeaders(c, user, globalSettings)
+
+		fmt.Println(v)
+
+		if v.Passes {
+			statusCode = http.StatusOK
+		} else {
+			statusCode = http.StatusTooManyRequests
+		}
+
+		c.Writer.Header().Set("Content-Type", "application/json")
+		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
+		c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, globalSettings.Period), 10))
+		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
+		
+		t := timeUntil(v.FirstHit)
+
 		c.JSON(statusCode, gin.H{
-			"passes":     messageToClient.Passes,
-			"reset_unix": messageToClient.ResetUnix,
-			"reset_iso":  messageToClient.ResetIso,
-			"limit":      messageToClient.Limit,
-			"remaining":  messageToClient.Remaining,
+			"passes":     v.Passes,
+			"reset_unix": t.Unix(),
+			"reset_iso":  t.Format(time.RFC3339),
+			"limit":      globalSettings.Limit,
+			"remaining":  v.Remaining,
 		})
 	}
 
-	ristrettoCache.SetWithTTL(requestUserHash, user, useRistrettoCostCalc, globalSettings.Period)
+	t := internal.RedisEntry{HitCount: v.HitCount, FirstHit: v.FirstHit}
+
+	ristrettoCache.SetWithTTL(requestUserHash, t, useRistrettoCostCalc, globalSettings.Period)
 	ristrettoCache.Wait()
 }
 
@@ -307,7 +284,7 @@ func timeUntil(t int64) time.Time {
 	return time.Unix(t+60, 0)
 }
 
-func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings Settings) {
+func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings RateLimiterConfiguration) {
 	var remaining int64 = -1
 	if settings.Limit-user.HitCount < 0 {
 		remaining = 0
