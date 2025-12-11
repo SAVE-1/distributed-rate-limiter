@@ -129,6 +129,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	}
 
 	defer cache.Close()
+	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
 
@@ -235,9 +236,6 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	requestUserHash := "ratelimit:" + userId
 
-	fmt.Println("requestUserHash:", requestUserHash)
-
-	fmt.Println("int(globalSettings.Period):", int(globalSettings.Period.Seconds()))
 
 	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit))
 
@@ -245,9 +243,6 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		h.Logger.Error("REDIS error:", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, nil)
 	} else {
-
-		fmt.Println(v)
-
 		if v.Passes {
 			statusCode = http.StatusOK
 		} else {
@@ -275,7 +270,6 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	// firsthit + period - nowSeconds
 	ttl := int(v.FirstHit) + int(globalSettings.Period.Seconds()) - time.Now().Second()
-	fmt.Println(ttl)
 	ristrettoCache.SetWithTTL(requestUserHash, t, useRistrettoCostCalc, time.Duration(ttl)*time.Second)
 	ristrettoCache.Wait()
 }

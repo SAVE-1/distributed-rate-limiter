@@ -2,7 +2,6 @@ package internal
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -81,36 +80,25 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 	values = t.([]interface{})
 
 	// {passes, hitcount, firsthit, remaining}
-	fmt.Println(values)
+	l := values[0].(int64)
 
-	l, ok := values[0].(int64)
-
-	if !ok {
-		fmt.Println("not ok :(((")
-	}
 
 	var passes bool
 	if l == 1 {
-		fmt.Println("Passes, wooo!!")
 		passes = true
 	} else {
 		passes = false
 	}
 
-	hitCount, ok := values[1].(int64)
-	if !ok {
-		fmt.Println("3.")
-	}
+	hitCount := values[1].(int64)
 
 	firstHit, ok := values[2].(int64)
+
 	if !ok {
-		fmt.Println("4.")
+		
 	}
 
-	remaining, ok := values[3].(int64)
-	if !ok {
-		fmt.Println("5.")
-	}
+	remaining := values[3].(int64)
 
 	e.Passes = passes
 	e.HitCount = hitCount
@@ -178,8 +166,43 @@ local nowSeconds = tonumber(now[1])
 local remaining_ttl = firsthit + period - nowSeconds
 redis.call('EXPIRE', key, math.max(remaining_ttl, 1))
     
-return {passes, hitcount, firsthit, remaining, period, k, limit}
+return {passes, hitcount, firsthit, remaining, period}
 `)
+
+
+// var tokenBucket = redis.NewScript(`
+// -- Optimized Fixed Window Rate Limiter
+// -- KEYS[1] = key
+// -- ARGV[1] = limit
+// -- ARGV[2] = period in seconds (TTL)
+
+// local limit = tonumber(ARGV[1])
+// local period = tonumber(ARGV[2])
+
+// -- 1. Atomically increment the hit counter
+// local hitcount = redis.call('INCR', KEYS[1])
+
+// -- 2. If it is the very first hit, set the window expiration
+// if hitcount == 1 then
+//     redis.call('EXPIRE', KEYS[1], period)
+// end
+
+// local passes = 0
+// local remaining = limit - hitcount
+
+// if hitcount <= limit then
+//     passes = 1
+// else
+//     remaining = 0
+// end
+
+// -- 3. Get the remaining time on the key
+// local ttl = redis.call('TTL', KEYS[1])
+
+// -- Return: {passes (1/0), hitcount, remaining, ttl_in_seconds}
+// return {passes, hitcount, remaining, ttl}
+// `)
+
 
 // returns the byte count, or the cost, of internal.RedisEntry -struct
 func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int64 {
