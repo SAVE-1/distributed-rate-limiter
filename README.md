@@ -37,6 +37,11 @@ or
     http://localhost:8001
 ```
 
+## why REDIS stored procedures are used?
+- to get a single source of truth for the monotonic clock (the redis server)
+- to reduce round trips by one
+- to get atomicity
+
 ## The API
 
 ### What the rate limiter receives from client

@@ -235,7 +235,11 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	requestUserHash := "ratelimit:" + userId
 
-	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period), int(globalSettings.Limit))
+	fmt.Println("requestUserHash:", requestUserHash)
+
+	fmt.Println("int(globalSettings.Period):", int(globalSettings.Period.Seconds()))
+
+	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit))
 
 	if err != nil {
 		h.Logger.Error("REDIS error:", zap.Error(err))
@@ -268,7 +272,11 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	t := internal.RedisEntry{HitCount: v.HitCount, FirstHit: v.FirstHit}
 
-	ristrettoCache.SetWithTTL(requestUserHash, t, useRistrettoCostCalc, globalSettings.Period)
+
+	// firsthit + period - nowSeconds
+	ttl := int(v.FirstHit) + int(globalSettings.Period.Seconds()) - time.Now().Second()
+	fmt.Println(ttl)
+	ristrettoCache.SetWithTTL(requestUserHash, t, useRistrettoCostCalc, time.Duration(ttl)*time.Second)
 	ristrettoCache.Wait()
 }
 

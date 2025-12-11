@@ -72,7 +72,7 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 
 	var e RedisResponse
 
-	t, err := tokenBucket.Run(ctx, h.RedisClient, []string{"ratelimiter:abc"}, values...).Result()
+	t, err := tokenBucket.Run(ctx, h.RedisClient, []string{hashName}, values...).Result()
 
 	if err != nil {
 		return RedisResponse{}, err
@@ -83,9 +83,18 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 	// {passes, hitcount, firsthit, remaining}
 	fmt.Println(values)
 
-	passes, ok := values[0].(bool)
+	l, ok := values[0].(int64)
+
 	if !ok {
-		fmt.Println("2.")
+		fmt.Println("not ok :(((")
+	}
+
+	var passes bool
+	if l == 1 {
+		fmt.Println("Passes, wooo!!")
+		passes = true
+	} else {
+		passes = false
 	}
 
 	hitCount, ok := values[1].(int64)
@@ -122,51 +131,54 @@ var tokenBucket = redis.NewScript(`
 
 
 redis.replicate_commands()
-
 local key = KEYS[1]
 local period = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
 local now = redis.call('TIME')
-local nowSeconds = tonumber(now[1])
-
+local now_in_millis = now[1]
 local hitcount
 local firsthit
+
+local k = 0
 
 if redis.call('EXISTS', key) == 1 then
     local data = redis.call('HMGET', key, 'hitcount', 'firsthit')
     hitcount = tonumber(data[1]) or 0
-    firsthit = tonumber(data[2]) or nowSeconds
+    firsthit = tonumber(data[2]) or now_in_millis
 
-    if nowSeconds - firsthit >= period then
-        hitcount = 1
-        firsthit = nowSeconds
-    else
-        hitcount = hitcount + 1
+	k = 1
+    
+    -- Check if window has expired
+    if now_in_millis - firsthit >= period then
+		k = 2
+        -- Reset window
+        hitcount = 0
+        firsthit = now_in_millis
     end
 else
-    hitcount = 1
-    firsthit = nowSeconds
+	k = 3
+    hitcount = 0
+    firsthit = now_in_millis
 end
+
+-- Increment hit count for current request
+hitcount = hitcount + 1
 
 local passes = 1
 local remaining = limit - hitcount
-
 if hitcount > limit then
     passes = 0
     remaining = 0
+	k = 4
 end
 
 redis.call('HMSET', key, 'hitcount', hitcount, 'firsthit', firsthit)
 
+local nowSeconds = tonumber(now[1])
 local remaining_ttl = firsthit + period - nowSeconds
-
-if remaining_ttl > 0 then
-     redis.call('EXPIRE', key, remaining_ttl)
-else
-    redis.call('EXPIRE', key, period)
-end
+redis.call('EXPIRE', key, math.max(remaining_ttl, 1))
     
-return {passes, hitcount, firsthit, remaining}
+return {passes, hitcount, firsthit, remaining, period, k, limit}
 `)
 
 // returns the byte count, or the cost, of internal.RedisEntry -struct
