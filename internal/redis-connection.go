@@ -117,7 +117,6 @@ var tokenBucket = redis.NewScript(`
 -- ARGV[2] = limit (max hits per period)
 -- Script returns: {passes, hitcount, firsthit, remaining}
 
-
 redis.replicate_commands()
 local key = KEYS[1]
 local period = tonumber(ARGV[1])
