@@ -1,0 +1,236 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: main.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1500 max VUs, 1m30s max duration (incl. graceful stop):
+              * steady_rate: 12000.00 iterations/s for 1m0s (maxVUs: 800-1500, gracefulStop: 30s)
+
+
+running (0m01.0s), 0007/0802 VUs, 10853 complete and 0 interrupted iterations
+steady_rate   [   2% ] 0008/0802 VUs  0m01.0s/1m0s  12000.00 iters/s
+
+running (0m02.0s), 0007/0802 VUs, 22854 complete and 0 interrupted iterations
+steady_rate   [   3% ] 0007/0802 VUs  0m02.0s/1m0s  12000.00 iters/s
+
+running (0m03.0s), 0008/0802 VUs, 34852 complete and 0 interrupted iterations
+steady_rate   [   5% ] 0008/0802 VUs  0m03.0s/1m0s  12000.00 iters/s
+
+running (0m04.0s), 0012/0802 VUs, 46850 complete and 0 interrupted iterations
+steady_rate   [   7% ] 0012/0802 VUs  0m04.0s/1m0s  12000.00 iters/s
+
+running (0m05.0s), 0007/0802 VUs, 58853 complete and 0 interrupted iterations
+steady_rate   [   8% ] 0007/0802 VUs  0m05.0s/1m0s  12000.00 iters/s
+
+running (0m06.0s), 0007/0802 VUs, 70855 complete and 0 interrupted iterations
+steady_rate   [  10% ] 0007/0802 VUs  0m06.0s/1m0s  12000.00 iters/s
+
+running (0m07.0s), 0005/0802 VUs, 82857 complete and 0 interrupted iterations
+steady_rate   [  12% ] 0005/0802 VUs  0m07.0s/1m0s  12000.00 iters/s
+
+running (0m08.0s), 0007/0802 VUs, 94855 complete and 0 interrupted iterations
+steady_rate   [  13% ] 0007/0802 VUs  0m08.0s/1m0s  12000.00 iters/s
+
+running (0m09.0s), 0010/0802 VUs, 106851 complete and 0 interrupted iterations
+steady_rate   [  15% ] 0010/0802 VUs  0m09.0s/1m0s  12000.00 iters/s
+
+running (0m10.0s), 0008/0802 VUs, 118853 complete and 0 interrupted iterations
+steady_rate   [  17% ] 0008/0802 VUs  0m10.0s/1m0s  12000.00 iters/s
+
+running (0m09.9s), 0006/0802 VUs, 130855 complete and 0 interrupted iterations
+steady_rate   [  18% ] 0006/0802 VUs  0m11.0s/1m0s  12000.00 iters/s
+
+running (0m10.9s), 0008/0802 VUs, 142854 complete and 0 interrupted iterations
+steady_rate   [  20% ] 0008/0802 VUs  0m12.0s/1m0s  12000.00 iters/s
+
+running (0m11.9s), 0008/0802 VUs, 154853 complete and 0 interrupted iterations
+steady_rate   [  22% ] 0008/0802 VUs  0m13.0s/1m0s  12000.00 iters/s
+
+running (0m12.9s), 0005/0802 VUs, 166857 complete and 0 interrupted iterations
+steady_rate   [  23% ] 0005/0802 VUs  0m14.0s/1m0s  12000.00 iters/s
+
+running (0m13.9s), 0089/0802 VUs, 178819 complete and 0 interrupted iterations
+steady_rate   [  25% ] 0089/0802 VUs  0m15.0s/1m0s  12000.00 iters/s
+
+running (0m14.9s), 0005/0802 VUs, 190857 complete and 0 interrupted iterations
+steady_rate   [  27% ] 0005/0802 VUs  0m16.0s/1m0s  12000.00 iters/s
+
+running (0m15.9s), 0007/0802 VUs, 202855 complete and 0 interrupted iterations
+steady_rate   [  28% ] 0007/0802 VUs  0m17.0s/1m0s  12000.00 iters/s
+
+running (0m16.9s), 0007/0802 VUs, 214857 complete and 0 interrupted iterations
+steady_rate   [  30% ] 0007/0802 VUs  0m18.0s/1m0s  12000.00 iters/s
+
+running (0m17.9s), 0008/0802 VUs, 226854 complete and 0 interrupted iterations
+steady_rate   [  32% ] 0007/0802 VUs  0m19.0s/1m0s  12000.00 iters/s
+
+running (0m18.9s), 0005/0802 VUs, 238858 complete and 0 interrupted iterations
+steady_rate   [  33% ] 0017/0802 VUs  0m20.0s/1m0s  12000.00 iters/s
+
+running (0m19.9s), 0027/0802 VUs, 250835 complete and 0 interrupted iterations
+steady_rate   [  35% ] 0027/0802 VUs  0m21.0s/1m0s  12000.00 iters/s
+
+running (0m20.9s), 0009/0802 VUs, 262853 complete and 0 interrupted iterations
+steady_rate   [  37% ] 0009/0802 VUs  0m22.0s/1m0s  12000.00 iters/s
+
+running (0m21.9s), 0003/0802 VUs, 274859 complete and 0 interrupted iterations
+steady_rate   [  38% ] 0003/0802 VUs  0m23.0s/1m0s  12000.00 iters/s
+
+running (0m22.9s), 0008/0802 VUs, 286855 complete and 0 interrupted iterations
+steady_rate   [  40% ] 0008/0802 VUs  0m24.0s/1m0s  12000.00 iters/s
+
+running (0m23.9s), 0006/0802 VUs, 298856 complete and 0 interrupted iterations
+steady_rate   [  42% ] 0006/0802 VUs  0m25.0s/1m0s  12000.00 iters/s
+
+running (0m24.9s), 0010/0802 VUs, 310854 complete and 0 interrupted iterations
+steady_rate   [  43% ] 0010/0802 VUs  0m26.0s/1m0s  12000.00 iters/s
+
+running (0m25.9s), 0006/0802 VUs, 322858 complete and 0 interrupted iterations
+steady_rate   [  45% ] 0006/0802 VUs  0m27.0s/1m0s  12000.00 iters/s
+
+running (0m26.9s), 0006/0802 VUs, 334856 complete and 0 interrupted iterations
+steady_rate   [  47% ] 0006/0802 VUs  0m28.0s/1m0s  12000.00 iters/s
+
+running (0m27.9s), 0007/0802 VUs, 346855 complete and 0 interrupted iterations
+steady_rate   [  48% ] 0007/0802 VUs  0m29.0s/1m0s  12000.00 iters/s
+
+running (0m28.9s), 0007/0802 VUs, 358856 complete and 0 interrupted iterations
+steady_rate   [  50% ] 0007/0802 VUs  0m30.0s/1m0s  12000.00 iters/s
+
+running (0m29.9s), 0007/0802 VUs, 370856 complete and 0 interrupted iterations
+steady_rate   [  52% ] 0007/0802 VUs  0m31.0s/1m0s  12000.00 iters/s
+
+running (0m30.9s), 0006/0802 VUs, 382858 complete and 0 interrupted iterations
+steady_rate   [  53% ] 0006/0802 VUs  0m32.0s/1m0s  12000.00 iters/s
+
+running (0m31.9s), 0006/0802 VUs, 394857 complete and 0 interrupted iterations
+steady_rate   [  55% ] 0006/0802 VUs  0m33.0s/1m0s  12000.00 iters/s
+
+running (0m32.9s), 0022/0802 VUs, 406834 complete and 0 interrupted iterations
+steady_rate   [  57% ] 0022/0802 VUs  0m34.0s/1m0s  12000.00 iters/s
+
+running (0m33.9s), 0006/0802 VUs, 418858 complete and 0 interrupted iterations
+steady_rate   [  58% ] 0006/0802 VUs  0m35.0s/1m0s  12000.00 iters/s
+
+running (0m34.9s), 0011/0802 VUs, 430852 complete and 0 interrupted iterations
+steady_rate   [  60% ] 0011/0802 VUs  0m36.0s/1m0s  12000.00 iters/s
+
+running (0m35.9s), 0007/0802 VUs, 442857 complete and 0 interrupted iterations
+steady_rate   [  62% ] 0007/0802 VUs  0m37.0s/1m0s  12000.00 iters/s
+
+running (0m36.9s), 0006/0802 VUs, 454857 complete and 0 interrupted iterations
+steady_rate   [  63% ] 0006/0802 VUs  0m38.0s/1m0s  12000.00 iters/s
+
+running (0m37.9s), 0006/0802 VUs, 466857 complete and 0 interrupted iterations
+steady_rate   [  65% ] 0006/0802 VUs  0m39.0s/1m0s  12000.00 iters/s
+
+running (0m38.9s), 0012/0802 VUs, 478852 complete and 0 interrupted iterations
+steady_rate   [  67% ] 0012/0802 VUs  0m40.0s/1m0s  12000.00 iters/s
+
+running (0m39.9s), 0006/0802 VUs, 490857 complete and 0 interrupted iterations
+steady_rate   [  68% ] 0006/0802 VUs  0m41.0s/1m0s  12000.00 iters/s
+
+running (0m40.9s), 0006/0802 VUs, 502852 complete and 0 interrupted iterations
+steady_rate   [  70% ] 0005/0802 VUs  0m42.0s/1m0s  12000.00 iters/s
+
+running (0m41.9s), 0008/0802 VUs, 514857 complete and 0 interrupted iterations
+steady_rate   [  72% ] 0008/0802 VUs  0m43.0s/1m0s  12000.00 iters/s
+
+running (0m41.9s), 0006/0802 VUs, 526856 complete and 0 interrupted iterations
+steady_rate   [  73% ] 0006/0802 VUs  0m44.0s/1m0s  12000.00 iters/s
+
+running (0m42.9s), 0005/0802 VUs, 538858 complete and 0 interrupted iterations
+steady_rate   [  75% ] 0005/0802 VUs  0m45.0s/1m0s  12000.00 iters/s
+
+running (0m43.9s), 0007/0802 VUs, 550855 complete and 0 interrupted iterations
+steady_rate   [  77% ] 0007/0802 VUs  0m46.0s/1m0s  12000.00 iters/s
+
+running (0m44.9s), 0040/0802 VUs, 562823 complete and 0 interrupted iterations
+steady_rate   [  78% ] 0039/0802 VUs  0m47.0s/1m0s  12000.00 iters/s
+
+running (0m45.9s), 0005/0802 VUs, 574857 complete and 0 interrupted iterations
+steady_rate   [  80% ] 0005/0802 VUs  0m48.0s/1m0s  12000.00 iters/s
+
+running (0m46.9s), 0005/0802 VUs, 586858 complete and 0 interrupted iterations
+steady_rate   [  82% ] 0005/0802 VUs  0m49.0s/1m0s  12000.00 iters/s
+
+running (0m47.9s), 0005/0802 VUs, 598858 complete and 0 interrupted iterations
+steady_rate   [  83% ] 0005/0802 VUs  0m50.0s/1m0s  12000.00 iters/s
+
+running (0m48.9s), 0005/0802 VUs, 610856 complete and 0 interrupted iterations
+steady_rate   [  85% ] 0005/0802 VUs  0m51.0s/1m0s  12000.00 iters/s
+
+running (0m49.9s), 0006/0802 VUs, 622857 complete and 0 interrupted iterations
+steady_rate   [  87% ] 0006/0802 VUs  0m52.0s/1m0s  12000.00 iters/s
+
+running (0m50.9s), 0006/0802 VUs, 634857 complete and 0 interrupted iterations
+steady_rate   [  88% ] 0006/0802 VUs  0m53.0s/1m0s  12000.00 iters/s
+
+running (0m51.9s), 0009/0802 VUs, 646855 complete and 0 interrupted iterations
+steady_rate   [  90% ] 0009/0802 VUs  0m54.0s/1m0s  12000.00 iters/s
+
+running (0m52.9s), 0007/0802 VUs, 658857 complete and 0 interrupted iterations
+steady_rate   [  92% ] 0007/0802 VUs  0m55.0s/1m0s  12000.00 iters/s
+
+running (0m53.9s), 0005/0802 VUs, 670859 complete and 0 interrupted iterations
+steady_rate   [  93% ] 0005/0802 VUs  0m56.0s/1m0s  12000.00 iters/s
+
+running (0m54.9s), 0006/0802 VUs, 682859 complete and 0 interrupted iterations
+steady_rate   [  95% ] 0006/0802 VUs  0m57.0s/1m0s  12000.00 iters/s
+
+running (0m55.9s), 0006/0802 VUs, 694858 complete and 0 interrupted iterations
+steady_rate   [  97% ] 0006/0802 VUs  0m58.0s/1m0s  12000.00 iters/s
+
+running (0m56.9s), 0007/0802 VUs, 706859 complete and 0 interrupted iterations
+steady_rate   [  98% ] 0006/0802 VUs  0m59.0s/1m0s  12000.00 iters/s
+
+running (0m57.9s), 0005/0802 VUs, 718859 complete and 0 interrupted iterations
+steady_rate   [ 100% ] 0005/0802 VUs  1m00.0s/1m0s  12000.00 iters/s
+
+
+  █ THRESHOLDS 
+
+    http_req_duration
+    ✓ 'p(95)<25' p(95)=1.23ms
+    ✓ 'p(99)<50' p(99)=8.15ms
+
+    http_req_failed
+    ✗ 'rate<0.01' rate=99.99%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 719438  12412.239636/s
+    checks_succeeded...: 100.00% 719438 out of 719438
+    checks_failed......: 0.00%   0 out of 719438
+
+    ✓ status is 200 or 429
+
+    HTTP
+    http_req_duration..............: avg=754.47µs min=26.08µs  med=427.75µs max=82.41ms  p(90)=729.81µs p(95)=1.23ms
+      { expected_response:true }...: avg=1.56ms   min=1.03ms   med=1.56ms   max=2.09ms   p(90)=1.99ms   p(95)=2.04ms
+    http_req_failed................: 99.99% 719436 out of 719438
+    http_reqs......................: 719438 12412.239636/s
+
+    EXECUTION
+    dropped_iterations.............: 564    9.730516/s
+    iteration_duration.............: avg=862.16µs min=110.28µs med=501.23µs max=130.08ms p(90)=823.41µs p(95)=1.37ms
+    iterations.....................: 719438 12412.239636/s
+    vus............................: 6      min=4                max=88 
+    vus_max........................: 802    min=802              max=802
+
+    NETWORK
+    data_received..................: 211 MB 3.6 MB/s
+    data_sent......................: 133 MB 2.3 MB/s
+
+
+
+
+running (0m58.0s), 0000/0802 VUs, 719438 complete and 0 interrupted iterations
+steady_rate ✓ [ 100% ] 0000/0802 VUs  1m0s  12000.00 iters/s
