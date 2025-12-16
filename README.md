@@ -7,12 +7,31 @@ The project is currently work-in-progress
 
 There is still plenty to do, such as:
 - Better configurations, most of the variables are hard coded
-- A small LUA optimization for atomicity and to avoid roundtrips to REDIS
-    - For now, the extra roundtrip costs quite a lot, at localhost the latency is around 4.5-5.2ms, but I expect it to get better with a REDIS-Lua optimization
 
 # Requirements
 - Go, at least version 1.24.5
 - Docker desktop
+- k6, if you want to run loadtests
+
+# Performance
+## Load Testing, best case
+The rate limiter was load tested using k6 with a constant arrival rate of 12,000 requests per second sustained for 60 seconds on a single node.
+
+The test was executed in WSL, with Redis and the rate-limiter service running on the same network, on an Intel i5-12600K.
+
+Test characteristics:
+- Traffic pattern: constant arrival rate
+- Client cardinality: high (unique client per request)
+- Endpoint: POST /v1/ratelimit
+
+Results:
+- Sustained throughput: ~12k requests/sec
+- avg latency: ~0.75 ms
+- med latency: ~0.43 ms
+- p95 latency: ~1.2 ms
+- p99 latency: ~8 ms
+- Correct rate-limit enforcement (HTTP 429 under excess load)
+
 ## Nice to have
 - Task, https://taskfile.dev/
 
