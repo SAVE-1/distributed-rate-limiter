@@ -24,13 +24,19 @@ Test characteristics:
 - Client cardinality: high (unique client per request)
 - Endpoint: POST /v1/ratelimit
 
-Results:
+Results, every user is unique:
 - Sustained throughput: ~12k requests/sec
-- avg latency: ~0.75 ms
-- med latency: ~0.43 ms
-- p95 latency: ~1.2 ms
-- p99 latency: ~8 ms
-- Correct rate-limit enforcement (HTTP 429 under excess load)
+- avg latency: ~1.68 ms
+- med latency: ~0.58 ms
+- p95 latency: ~5.39 ms
+- p99 latency: ~19 ms
+
+Results, 100 unique users:
+- Sustained throughput: ~12k requests/sec
+- avg latency: ~1.22 ms
+- med latency: ~0.23 ms
+- p95 latency: ~1.07 ms
+- p99 latency: ~35 ms
 
 ## Nice to have
 - Task, https://taskfile.dev/
