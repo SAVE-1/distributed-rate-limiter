@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,24 @@ type RedisResponse struct {
 	FirstHit   int64
 	Remaining  int64
 	ResetsUnix int64
+}
+
+func (i RedisResponse) String() string {
+	var b strings.Builder
+	b.Grow(128) // preallocate enough
+	b.WriteString("[ passes: ")
+	b.WriteString(strconv.FormatBool(i.Passes))
+	b.WriteString(", hit-count: ")
+	b.WriteString(strconv.FormatInt(i.HitCount, 10))
+	b.WriteString(", first-hit: ")
+	b.WriteString(strconv.FormatInt(i.FirstHit, 10))
+	b.WriteString(", remaining: ")
+	b.WriteString(strconv.FormatInt(i.Remaining, 10))
+	b.WriteString(", resets-unix: ")
+	b.WriteString(strconv.FormatInt(i.ResetsUnix, 10))
+	b.WriteString(" ]")
+
+	return b.String()
 }
 
 type RedisConnection struct {
@@ -66,14 +85,20 @@ func (i RedisEntry) String() string {
 }
 
 func (h *RedisConnection) ProcessSomething(hashName string, period int, limit int) (RedisResponse, error) {
+	if h.RedisClient == nil {
+        h.Logger.Error("ERROR: RedisClient is NIL!")
+        return RedisResponse{}, errors.New("redis client not initialized")
+    }
 	ctx := context.Background()
+		
 	values := []interface{}{period, limit}
 
 	var e RedisResponse
 
 	t, err := tokenBucket.Run(ctx, h.RedisClient, []string{hashName}, values...).Result()
-
+	
 	if err != nil {
+		h.Logger.Error("error with redis")
 		return RedisResponse{}, err
 	}
 
@@ -111,11 +136,12 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 // https://redis.uptrace.dev/guide/lua-scripting.html#redis-script
 // https://github.com/go-redis/redis_rate/blob/v9/rate.go
 // https://github.com/go-redis/redis_rate/blob/v9/lua.go
+
 var tokenBucket = redis.NewScript(`
 -- KEYS[1] = hash key (e.g. ratelimit:abc-123)
 -- ARGV[1] = period in seconds (e.g. 60)
 -- ARGV[2] = limit (max hits per period)
--- Script returns: {passes, hitcount, firsthit, remaining}
+-- Script returns: {passes, hitcount, firsthit, remaining, period}
 
 redis.replicate_commands()
 local key = KEYS[1]
@@ -126,24 +152,17 @@ local now_in_millis = now[1]
 local hitcount
 local firsthit
 
-local k = 0
-
 if redis.call('EXISTS', key) == 1 then
     local data = redis.call('HMGET', key, 'hitcount', 'firsthit')
     hitcount = tonumber(data[1]) or 0
-    firsthit = tonumber(data[2]) or now_in_millis
-
-	k = 1
-    
+    firsthit = tonumber(data[2]) or now_in_millis    
     -- Check if window has expired
     if now_in_millis - firsthit >= period then
-		k = 2
         -- Reset window
         hitcount = 0
         firsthit = now_in_millis
     end
 else
-	k = 3
     hitcount = 0
     firsthit = now_in_millis
 end
@@ -156,7 +175,6 @@ local remaining = limit - hitcount
 if hitcount > limit then
     passes = 0
     remaining = 0
-	k = 4
 end
 
 redis.call('HMSET', key, 'hitcount', hitcount, 'firsthit', firsthit)
@@ -167,41 +185,6 @@ redis.call('EXPIRE', key, math.max(remaining_ttl, 1))
     
 return {passes, hitcount, firsthit, remaining, period}
 `)
-
-
-// var tokenBucket = redis.NewScript(`
-// -- Optimized Fixed Window Rate Limiter
-// -- KEYS[1] = key
-// -- ARGV[1] = limit
-// -- ARGV[2] = period in seconds (TTL)
-
-// local limit = tonumber(ARGV[1])
-// local period = tonumber(ARGV[2])
-
-// -- 1. Atomically increment the hit counter
-// local hitcount = redis.call('INCR', KEYS[1])
-
-// -- 2. If it is the very first hit, set the window expiration
-// if hitcount == 1 then
-//     redis.call('EXPIRE', KEYS[1], period)
-// end
-
-// local passes = 0
-// local remaining = limit - hitcount
-
-// if hitcount <= limit then
-//     passes = 1
-// else
-//     remaining = 0
-// end
-
-// -- 3. Get the remaining time on the key
-// local ttl = redis.call('TTL', KEYS[1])
-
-// -- Return: {passes (1/0), hitcount, remaining, ttl_in_seconds}
-// return {passes, hitcount, remaining, ttl}
-// `)
-
 
 // returns the byte count, or the cost, of internal.RedisEntry -struct
 func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int64 {
@@ -224,6 +207,17 @@ func (h *RedisConnection) GetRedisEntryCostFunction() func(value RedisEntry) int
 		*/
 		return 24
 	}
+}
+
+func (h *RedisConnection) HIncrBy(ctx context.Context, key string, field string, count int64) error {
+	err := h.RedisClient.HIncrBy(ctx, key, field, count).Err()
+
+	if err != nil {
+		h.Logger.Error("error with incrementing")
+		return err
+	}
+
+	return nil
 }
 
 // opens a redis connection

@@ -37,7 +37,7 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 
 func main() {
 	config := ratelimiter.RateLimiterConfiguration{
-		RedisAddress:             "127.0.0.1:6379",
+		RedisAddress:             "127.0.0.1:6380",
 		RedisUsername:            "default",
 		RedisPassword:            "mypassword",
 		Period:                   1 * time.Minute,

@@ -3,7 +3,6 @@ package ratelimiter
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -20,7 +19,7 @@ import (
 )
 
 var (
-	version        = "0.4"
+	version        = "0.5"
 	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
 	globalSettings = RateLimiterConfiguration{
 		AllowStartupWithoutRedis: false,
@@ -51,7 +50,6 @@ type RateLimiterConfiguration struct {
 }
 
 func Start(ratelimiterConfig RateLimiterConfiguration) error {
-	fmt.Println("Distributed rate limiter, version", version)
 
 	if ratelimiterConfig.Period != 0 {
 		globalSettings.Period = ratelimiterConfig.Period
@@ -65,17 +63,13 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 		globalSettings.AllowStartupWithoutRedis = ratelimiterConfig.AllowStartupWithoutRedis
 	}
 
-	fmt.Println("Allow startupt without REDIS:", globalSettings.AllowStartupWithoutRedis)
-	fmt.Println("Request window:", globalSettings.Period)
-	fmt.Println("Requests until limit:", globalSettings.Limit)
-
 	config := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
 		Development:      false,
 		Encoding:         "json",
 		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
 		OutputPaths:      []string{"stdout", "rate-limiter.log"},
-		ErrorOutputPaths: []string{"stderr", "rate-limiter.log"},
+		ErrorOutputPaths: []string{"stdout", "stderr", "rate-limiter.log"},
 	}
 
 	logger, err := config.Build()
@@ -86,6 +80,10 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	defer logger.Sync()
 
 	logger.Info("Custom logger initialized")
+	logger.Info("Distributed rate limiter, version", zap.String("version", version))
+	logger.Info("Allow startupt without REDIS:", zap.Bool("allow startup without redis", globalSettings.AllowStartupWithoutRedis))
+	logger.Info("Request window:", zap.String("request window", globalSettings.Period.String()))
+	logger.Info("Requests until limit:", zap.Int64("global limit", globalSettings.Limit))
 
 	address := ratelimiterConfig.RedisAddress
 	username := ratelimiterConfig.RedisUsername
@@ -115,7 +113,8 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 		return errors.New("Startup not allowed with a limit other than 1min")
 	}
 
-	cache, ristrettoInitError := ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
+	var ristrettoInitError error
+	ristrettoCache, ristrettoInitError = ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
@@ -124,11 +123,13 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	// this is fatal, internal cache is required in all cases
 	if ristrettoInitError != nil {
-		logger.Error("Internal error, unable to init internal cache, shutting down rate limiter", zap.Error(ristrettoInitError))
+		h.Logger.Error("Internal error, unable to init internal cache, shutting down rate limiter", zap.Error(ristrettoInitError))
 		return ristrettoInitError
+	} else {
+		h.Logger.Info("Internal cache started successfully")
 	}
 
-	defer cache.Close()
+	defer ristrettoCache.Close()
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
@@ -224,11 +225,11 @@ func (h *Handler) health(c *gin.Context) {
 func (h *Handler) isRequestAllowed(c *gin.Context) {
 	const useRistrettoCostCalc int64 = 0
 	var messageFromClient IncomingMessage
-	var statusCode int
+	// var statusCode int
 	var userId string
 
 	if err := c.ShouldBindJSON(&messageFromClient); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing either 'client id' or 'rules id'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Malformed JSON, missing either 'client id' or 'rules id'"})
 		return
 	}
 
@@ -236,42 +237,41 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 	requestUserHash := "ratelimit:" + userId
 
+	if entry, found := ristrettoCache.Get(requestUserHash); found {
+		if entry.HitCount >= globalSettings.Limit {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limited (cached)"})
+			return
+		}
+	}
 
 	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit))
-
 	if err != nil {
-		h.Logger.Error("REDIS error:", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, nil)
-	} else {
-		if v.Passes {
-			statusCode = http.StatusOK
-		} else {
-			statusCode = http.StatusTooManyRequests
-		}
-
 		c.Writer.Header().Set("Content-Type", "application/json")
 		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
 		c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, globalSettings.Period), 10))
 		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
-		
-		t := timeUntil(v.FirstHit)
-
-		c.JSON(statusCode, gin.H{
-			"passes":     v.Passes,
-			"reset_unix": t.Unix(),
-			"reset_iso":  t.Format(time.RFC3339),
-			"limit":      globalSettings.Limit,
-			"remaining":  v.Remaining,
-		})
+		c.JSON(http.StatusInternalServerError, nil)
+		return
 	}
 
-	t := internal.RedisEntry{HitCount: v.HitCount, FirstHit: v.FirstHit}
+	newEntry := internal.RedisEntry{HitCount: v.HitCount, FirstHit: v.FirstHit}
 
+	expiry := time.Unix(v.FirstHit, 0).Add(globalSettings.Period)
+	ttl := time.Until(expiry)
 
-	// firsthit + period - nowSeconds
-	ttl := int(v.FirstHit) + int(globalSettings.Period.Seconds()) - time.Now().Second()
-	ristrettoCache.SetWithTTL(requestUserHash, t, useRistrettoCostCalc, time.Duration(ttl)*time.Second)
-	ristrettoCache.Wait()
+	if ttl > 0 {
+		ristrettoCache.SetWithTTL(requestUserHash, newEntry, 0, ttl)
+	}
+
+	status := http.StatusOK
+	if !v.Passes {
+		status = http.StatusTooManyRequests
+	}
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
+	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, globalSettings.Period), 10))
+	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
+	c.JSON(status, v)
 }
 
 type MessageToClient struct {
@@ -304,3 +304,8 @@ func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 
 	return (userFirstHitAsTime.Add(window).UnixMilli() - time.Now().UnixMilli()) / millisInSecond
 }
 
+func hasAMinutePassed(previousInUnix int64) bool {
+	timeNowInUnix := time.Now().Unix()
+	const minuteInUnix int64 = 60
+	return (timeNowInUnix - previousInUnix) >= minuteInUnix
+}
