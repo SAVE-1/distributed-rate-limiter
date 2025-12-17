@@ -286,20 +286,6 @@ func timeUntil(t int64) time.Time {
 	return time.Unix(t+60, 0)
 }
 
-func setRatelimitSpecificHeaders(c *gin.Context, user internal.RedisEntry, settings RateLimiterConfiguration) {
-	var remaining int64 = -1
-	if settings.Limit-user.HitCount < 0 {
-		remaining = 0
-	} else {
-		remaining = settings.Limit - user.HitCount
-	}
-
-	c.Writer.Header().Set("Content-Type", "application/json")
-	c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(user.FirstHit, globalSettings.Period), 10))
-	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
-}
-
 func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 {
 	/*
 		example:
@@ -318,13 +304,3 @@ func secondsUntilRatelimitReset(userFirstHit int64, window time.Duration) int64 
 	return (userFirstHitAsTime.Add(window).UnixMilli() - time.Now().UnixMilli()) / millisInSecond
 }
 
-func hasAMinutePassed(previousInUnix int64) bool {
-	timeNowInUnix := time.Now().Unix()
-	const minuteInUnix int64 = 60
-	return (timeNowInUnix - previousInUnix) >= minuteInUnix
-}
-
-func extractClientIpWithoutPort(c *gin.Context) string {
-	i := strings.Index(c.Request.RemoteAddr, ":")
-	return c.Request.RemoteAddr[:i]
-}
