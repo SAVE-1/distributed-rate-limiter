@@ -94,11 +94,9 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	client, redisConnectionError := internal.OpenRedisConnection(redisConnection)
 
 	if redisConnectionError != nil {
-		logger.Error("Error connecting to redis", zap.Error(redisConnectionError))
+		// stop the server altogether
 		if !globalSettings.AllowStartupWithoutRedis {
-			// stop the server altogether
-			logger.Error("Shutting down rate limiter, REDIS is required")
-			return errors.Join(errors.New("Startup not allowed without REDIS"), redisConnectionError)
+			return errors.Join(redisConnectionError, errors.New("startup not allowed without Redis"))
 		}
 	} else {
 		logger.Info("Connected to REDIS instance successfully")

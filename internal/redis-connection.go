@@ -230,10 +230,9 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 	})
 	ctx := context.Background()
 
-	_, err := redisClient.Ping(ctx).Result()
-
+	_, err := redisClient.Ping(ctx).Result() // *net.OpError
+	
 	if err != nil {
-		r.Logger.Error("REDIS initialization error", zap.Error(err))
 		return nil, err
 	}
 
