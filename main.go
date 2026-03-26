@@ -1,10 +1,14 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/SAVE-1/distributed-rate-limiter/ratelimiter"
+	"github.com/urfave/cli/v3"
 )
 
 /*
@@ -36,16 +40,64 @@ CURRENT BEHAVIOR / KNOWN ISSUES
 */
 
 func main() {
-	config := ratelimiter.RateLimiterConfiguration{
-		RedisAddress:             "127.0.0.1:6380",
-		RedisUsername:            "default",
-		RedisPassword:            "mypassword",
-		Period:                   1 * time.Minute,
-		Limit:                    2,
-		AllowStartupWithoutRedis: false,
+
+	cmd := &cli.Command{
+		UseShortOptionHandling: true,
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:  "redisaddr",
+				Value: "",
+				Usage: "redis ip address",
+			},
+			&cli.StringFlag{
+				Name:  "redisuser",
+				Value: "",
+				Usage: "redis user name",
+			},
+			&cli.StringFlag{
+				Name:  "redispassword",
+				Value: "",
+				Usage: "redis user password",
+			},
+			&cli.IntFlag{
+				Name:  "period",
+				Value: 60,
+				Usage: "user request reset period",
+			},
+			&cli.IntFlag{
+				Name:  "reqlimit",
+				Value: 2,
+				Usage: "user request limit"},
+			&cli.BoolFlag{
+				Name:  "redis",
+				Value: false,
+				Usage: "is no redis allowed",
+			},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			seconds, err := time.ParseDuration(strconv.Itoa(int(cmd.Int("period"))) + "s")
+			if err != nil {
+				return err
+			}
+
+			config := ratelimiter.RateLimiterConfiguration{
+				RedisAddress:             cmd.String("redisaddr"),
+				RedisUsername:            cmd.String("redisuser"),
+				RedisPassword:            cmd.String("redispassword"),
+				Period:                   seconds,
+				Limit:                    int64(cmd.Int("reqlimit")),
+				AllowStartupWithoutRedis: cmd.Bool("redis"),
+			}
+
+			if err := ratelimiter.Start(config); err != nil {
+				return err
+			}
+			return nil
+		},
 	}
 
-	if err := ratelimiter.Start(config); err != nil {
-		fmt.Println(err)
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
+		log.Fatal(err)
 	}
+
 }

@@ -4,6 +4,12 @@ version: '3'
 
 vars:
   EXENAME: distributed-rate-limiter.exe
+  REDIS_ADDR: 127.0.0.1:6380
+  REDIS_USER: default
+  REDIS_PASS: mypassword
+  PERIOD: 60
+  REQ_LIMIT: 2
+  REDIS: false
 
 tasks:
   build:
@@ -14,7 +20,13 @@ tasks:
   run:
     deps: [build]
     cmds:
-      - ./bin/{{.EXENAME}}
+      - ./bin/{{.EXENAME}} --redisaddr {{.REDIS_ADDR}} --redisuser {{.REDIS_USER}} --redispassword {{.REDIS_PASS}} --period {{.PERIOD}} --reqlimit {{.REQ_LIMIT}} --redis {{.REDIS}}
+
+  help:
+    deps: [build]
+    cmds:
+      - ./bin/{{.EXENAME}} help
+
 
 # UTILITY
   loc:
