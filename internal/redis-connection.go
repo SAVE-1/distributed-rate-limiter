@@ -220,7 +220,10 @@ func (h *RedisConnection) HIncrBy(ctx context.Context, key string, field string,
 	return nil
 }
 
-// opens a redis connection
+// OpenRedisConnection initializes the Redis client, and attempts tp validate client connection by issuing a PING.
+// Returns a ready-to-use client, or an error if the server is unreachable,
+// the address is misconfigured, or authentication fails.
+// The caller is responsible for closing the client when done.
 func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 	// these will be moved into environment vars in the future
 	redisClient := redis.NewClient(&redis.Options{
