@@ -244,6 +244,6 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 	return redisClient, nil
 }
 
-func (h *RedisConnection) CloseRedis() error {
+func (h *RedisConnection) CloseRedisConnection() error {
 	return h.RedisClient.Close()
 }
