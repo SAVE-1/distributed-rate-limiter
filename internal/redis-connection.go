@@ -239,7 +239,7 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 		return nil, err
 	}
 
-	r.Logger.Info("No error with REDIS initialization")
+	r.Logger.Info("Redis connection initialized successfully ")
 
 	return redisClient, nil
 }
