@@ -243,6 +243,7 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 	}
 
 	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit))
+	
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "application/json")
 		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))

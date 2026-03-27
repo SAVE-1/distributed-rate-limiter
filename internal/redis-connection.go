@@ -26,7 +26,7 @@ func (i *RedisEntry) Reset() {
 	i.FirstHit = time.Now().Unix()
 }
 
-// {passes, hitcount, firsthit, remaining}
+// Script returns: {passes, hitcount, firsthit, remaining, period}
 type RedisResponse struct {
 	Passes     bool
 	HitCount   int64
@@ -104,9 +104,7 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 
 	values = t.([]interface{})
 
-	// {passes, hitcount, firsthit, remaining}
 	l := values[0].(int64)
-
 
 	var passes bool
 	if l == 1 {
@@ -117,11 +115,7 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 
 	hitCount := values[1].(int64)
 
-	firstHit, ok := values[2].(int64)
-
-	if !ok {
-		
-	}
+	firstHit := values[2].(int64)
 
 	remaining := values[3].(int64)
 
@@ -148,7 +142,8 @@ local key = KEYS[1]
 local period = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
 local now = redis.call('TIME')
-local now_in_millis = now[1]
+-- local now_in_millis = now[1]
+local now_in_millis = tonumber(now[1])
 local hitcount
 local firsthit
 
@@ -180,7 +175,7 @@ end
 redis.call('HMSET', key, 'hitcount', hitcount, 'firsthit', firsthit)
 
 local nowSeconds = tonumber(now[1])
-local remaining_ttl = firsthit + period - nowSeconds
+local remaining_ttl = firsthit + period - now_in_millis
 redis.call('EXPIRE', key, math.max(remaining_ttl, 1))
     
 return {passes, hitcount, firsthit, remaining, period}
