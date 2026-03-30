@@ -28,6 +28,10 @@ var (
 	}
 )
 
+func GetVersion() string {
+	return version
+}
+
 type Settings struct {
 	AllowStartupWithoutRedis bool
 	Period                   time.Duration
