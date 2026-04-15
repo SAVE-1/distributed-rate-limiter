@@ -51,6 +51,7 @@ type RateLimiterConfiguration struct {
 	Period                   time.Duration
 	Limit                    int64
 	AllowStartupWithoutRedis bool
+	DefaultAlgorithm         string
 }
 
 func Start(ratelimiterConfig RateLimiterConfiguration) error {
@@ -108,7 +109,9 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	redisConnection.RedisClient = client
 
-	h := NewHandler(logger, *redisConnection)
+	serverConfig := NewHandlerConfig(ratelimiterConfig.DefaultAlgorithm)
+
+	h := NewHandler(logger, *redisConnection, serverConfig)
 
 	if globalSettings.Period != 1*time.Minute {
 		logger.Error("Configuration error - global window must be 1min for now")
@@ -181,6 +184,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 type IncomingMessage struct {
 	ClientId string `json:"ClientId" binding:"required"`
 	RulesId  string `json:"RulesId" binding:"required"`
+	Algorithm  string `json:"Algorithm" binding:"required"`
 }
 
 func (i IncomingMessage) String() string {
@@ -196,15 +200,27 @@ func (i IncomingMessage) String() string {
 	return b.String()
 }
 
+type HandlerConfig struct {
+	DefaultAlgorithm string
+}
+
+func NewHandlerConfig(algo string) *HandlerConfig {
+	return &HandlerConfig{
+		DefaultAlgorithm: algo,
+	}
+}
+
 type Handler struct {
 	Logger          *zap.Logger
 	RedisConnection internal.RedisConnection
+	Config          *HandlerConfig
 }
 
-func NewHandler(logger *zap.Logger, conn internal.RedisConnection) *Handler {
+func NewHandler(logger *zap.Logger, conn internal.RedisConnection, h *HandlerConfig) *Handler {
 	return &Handler{
 		Logger:          logger,
 		RedisConnection: conn,
+		Config: h,
 	}
 }
 
@@ -235,9 +251,14 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		return
 	}
 
+	algo := messageFromClient.Algorithm
+	
+	if !internal.VerifyAlgorithm(algo) {
+		algo = h.Config.DefaultAlgorithm
+	}
+	
 	userId = messageFromClient.ClientId
-
-	requestUserHash := "ratelimit:" + userId
+	requestUserHash := "ratelimit:" + userId + ":" + algo
 
 	if entry, found := ristrettoCache.Get(requestUserHash); found {
 		if entry.HitCount >= globalSettings.Limit {
@@ -246,8 +267,8 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		}
 	}
 
-	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit))
-	
+	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit), algo)
+
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "application/json")
 		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))

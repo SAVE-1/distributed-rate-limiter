@@ -84,7 +84,7 @@ func (i RedisEntry) String() string {
 	return b.String()
 }
 
-func (h *RedisConnection) ProcessSomething(hashName string, period int, limit int) (RedisResponse, error) {
+func (h *RedisConnection) ProcessSomething(hashName string, period int, limit int, algo string) (RedisResponse, error) {
 	if h.RedisClient == nil {
         h.Logger.Error("ERROR: RedisClient is NIL!")
         return RedisResponse{}, errors.New("redis client not initialized")
@@ -95,7 +95,9 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 
 	var e RedisResponse
 
-	t, err := tokenBucket.Run(ctx, h.RedisClient, []string{hashName}, values...).Result()
+	algorithm := algoFactory(algo)
+
+	t, err := algorithm.Run(ctx, h.RedisClient, []string{hashName}, values...).Result()
 	
 	if err != nil {
 		h.Logger.Error("error with redis")
@@ -125,6 +127,15 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 	e.Remaining = remaining
 
 	return e, nil
+}
+
+func algoFactory(algo string) *redis.Script {
+	switch algo {
+	case "fixed_window":
+		return redis.NewScript(ScriptFixedWindow)
+	default:
+		return redis.NewScript(ScriptFixedWindow)
+	}
 }
 
 // https://redis.uptrace.dev/guide/lua-scripting.html#redis-script

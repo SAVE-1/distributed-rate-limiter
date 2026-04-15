@@ -10,6 +10,7 @@ vars:
   PERIOD: 60
   REQ_LIMIT: 2
   REDIS: false
+  ALGO: fixed_window
 
 tasks:
   build:
@@ -20,7 +21,7 @@ tasks:
   run:
     deps: [build]
     cmds:
-      - ./bin/{{.EXENAME}} --redisaddr {{.REDIS_ADDR}} --redisuser {{.REDIS_USER}} --redispassword {{.REDIS_PASS}} --period {{.PERIOD}} --reqlimit {{.REQ_LIMIT}} --redis {{.REDIS}}
+      - ./bin/{{.EXENAME}} --redisaddr {{.REDIS_ADDR}} --redisuser {{.REDIS_USER}} --redispassword {{.REDIS_PASS}} --period {{.PERIOD}} --reqlimit {{.REQ_LIMIT}} --noredisallowed {{.REDIS}} --default_limit_algorithm {{.ALGO}}
 
   help:
     deps: [build]

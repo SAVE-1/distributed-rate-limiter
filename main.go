@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/SAVE-1/distributed-rate-limiter/ratelimiter"
 	"github.com/urfave/cli/v3"
 )
@@ -105,6 +106,17 @@ func main() {
 				Aliases: []string{"V", "v"},
 				Usage:   "server version",
 			},
+			&cli.StringFlag{
+				Name:    "default_limit_algorithm",
+				Value:   "fixed_window",
+				Usage:   "what the default algorithm is used",
+				Sources: cli.EnvVars("DEFAULT_LIMIT_ALGORITHM"),
+				Validator: func(t string) error {
+					if internal.VerifyAlgorithm(t) {
+						return nil
+					}
+					return fmt.Errorf("Must be positive")
+				}},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if cmd.Bool("version") {
