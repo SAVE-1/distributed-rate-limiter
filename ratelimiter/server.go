@@ -260,9 +260,22 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 	userId = messageFromClient.ClientId
 	requestUserHash := "ratelimit:" + userId + ":" + algo
 
-	if entry, found := ristrettoCache.Get(requestUserHash); found {
-		if entry.HitCount >= globalSettings.Limit {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limited (cached)"})
+	if entry, found := h.ristrettoCache.Get(requestUserHash); found {
+		if entry.HitCount >= h.Config.Limit {
+			entry.HitCount++
+
+			// now - "when first hit registered" + "configured period"
+			resets := time.Duration(time.Now().UnixNano())-time.Duration(entry.FirstHit) + h.Config.Period
+
+			h.ristrettoCache.SetWithTTL(requestUserHash, entry, 0, resets)
+			h.ristrettoCache.Wait()
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"Passes":     false,
+				"HitCount":   entry.HitCount,
+				"FirstHit":   entry.FirstHit,
+				"Remaining":  0,
+				"ResetsUnix": resets.Seconds(),
+			})
 			return
 		}
 	}
