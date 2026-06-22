@@ -29,7 +29,8 @@ Accept-Language: en-US,en;q=0.5
 
 {
     "ClientId": "123-456-789",
-    "RulesId": "content name"
+    "RulesId": "content name",
+    "Algorithm": "fixed_window"
 }
 
 ###
@@ -39,8 +40,9 @@ Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 {
-    "ClientId": "waddddddddssdasd",
-    "RulesId": "content name"
+    "ClientId": "tester",
+    "RulesId": "content name",
+    "Algorithm": "fixed_window"
 }
 
 ###
@@ -63,7 +65,7 @@ Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 {
-    "ClientId": "waddddddddssdasd",
+    "ClientId": "tester2",
     "RulesId": "content name",
     "Algorithm": "fixed_window"
 }
