@@ -19,29 +19,11 @@ import (
 )
 
 var (
-	version        = "0.5"
-	ristrettoCache *ristretto.Cache[string, internal.RedisEntry]
-	globalSettings = RateLimiterConfiguration{
-		AllowStartupWithoutRedis: false,
-		Period:                   1 * time.Minute,
-		Limit:                    100,
-	}
+	version = "0.5"
 )
 
 func GetVersion() string {
 	return version
-}
-
-type Settings struct {
-	AllowStartupWithoutRedis bool
-	Period                   time.Duration
-	Limit                    int64
-}
-
-type FixedWindowEntry struct {
-	Ip       string
-	FirstHit time.Time
-	HitCount int
 }
 
 type RateLimiterConfiguration struct {
@@ -55,19 +37,6 @@ type RateLimiterConfiguration struct {
 }
 
 func Start(ratelimiterConfig RateLimiterConfiguration) error {
-
-	if ratelimiterConfig.Period != 0 {
-		globalSettings.Period = ratelimiterConfig.Period
-	}
-
-	if ratelimiterConfig.Limit != 0 {
-		globalSettings.Limit = ratelimiterConfig.Limit
-	}
-
-	if ratelimiterConfig.AllowStartupWithoutRedis != false {
-		globalSettings.AllowStartupWithoutRedis = ratelimiterConfig.AllowStartupWithoutRedis
-	}
-
 	config := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
 		Development:      false,
@@ -84,12 +53,6 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	defer logger.Sync()
 
-	logger.Info("Custom logger initialized")
-	logger.Info("Distributed rate limiter, version", zap.String("version", version))
-	logger.Info("Allow startupt without REDIS:", zap.Bool("allow startup without redis", globalSettings.AllowStartupWithoutRedis))
-	logger.Info("Request window:", zap.String("request window", globalSettings.Period.String()))
-	logger.Info("Requests until limit:", zap.Int64("global limit", globalSettings.Limit))
-
 	address := ratelimiterConfig.RedisAddress
 	username := ratelimiterConfig.RedisUsername
 	password := ratelimiterConfig.RedisPassword
@@ -100,7 +63,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	if redisConnectionError != nil {
 		// stop the server altogether
-		if !globalSettings.AllowStartupWithoutRedis {
+		if !ratelimiterConfig.AllowStartupWithoutRedis {
 			return errors.Join(redisConnectionError, errors.New("startup not allowed without Redis"))
 		}
 	} else {
@@ -109,17 +72,25 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	redisConnection.RedisClient = client
 
-	serverConfig := NewHandlerConfig(ratelimiterConfig.DefaultAlgorithm)
+	serverConfig := NewHandlerConfig(ratelimiterConfig.DefaultAlgorithm, ratelimiterConfig.Period)
 
 	h := NewHandler(logger, *redisConnection, serverConfig)
 
-	if globalSettings.Period != 1*time.Minute {
+	if h.Config.Period != 1*time.Minute {
 		logger.Error("Configuration error - global window must be 1min for now")
 		return errors.New("Startup not allowed with a limit other than 1min")
 	}
 
+	h.Config.Limit = ratelimiterConfig.Limit
+
+	logger.Info("Custom logger initialized")
+	logger.Info("Distributed rate limiter, version", zap.String("version", version))
+	logger.Info("Allow startupt without REDIS:", zap.Bool("allow startup without redis", h.Config.AllowStartupWithoutRedis))
+	logger.Info("Request window:", zap.String("request window", h.Config.Period.String()))
+	logger.Info("Requests until limit:", zap.Int64("global limit", h.Config.Limit))
+
 	var ristrettoInitError error
-	ristrettoCache, ristrettoInitError = ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
+	h.ristrettoCache, ristrettoInitError = ristretto.NewCache(&ristretto.Config[string, internal.RedisEntry]{
 		NumCounters: 1e7,     // number of keys to track frequency of (10M).
 		MaxCost:     1 << 30, // maximum cost of cache (1GB).
 		BufferItems: 64,      // number of keys per Get buffer.
@@ -134,7 +105,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 		h.Logger.Info("Internal cache started successfully")
 	}
 
-	defer ristrettoCache.Close()
+	defer h.ristrettoCache.Close()
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
@@ -182,9 +153,9 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 // message from the web client
 type IncomingMessage struct {
-	ClientId string `json:"ClientId" binding:"required"`
-	RulesId  string `json:"RulesId" binding:"required"`
-	Algorithm  string `json:"Algorithm" binding:"required"`
+	ClientId  string `json:"ClientId" binding:"required"`
+	RulesId   string `json:"RulesId" binding:"required"`
+	Algorithm string `json:"Algorithm" binding:"required"`
 }
 
 func (i IncomingMessage) String() string {
@@ -200,19 +171,30 @@ func (i IncomingMessage) String() string {
 	return b.String()
 }
 
+/*
+	AllowStartupWithoutRedis: false,
+	Period:                   1 * time.Minute,
+	Limit:                    100,
+*/
+
 type HandlerConfig struct {
-	DefaultAlgorithm string
+	DefaultAlgorithm         string
+	Period                   time.Duration
+	AllowStartupWithoutRedis bool
+	Limit                    int64
 }
 
-func NewHandlerConfig(algo string) *HandlerConfig {
+func NewHandlerConfig(algo string, ttl time.Duration) *HandlerConfig {
 	return &HandlerConfig{
 		DefaultAlgorithm: algo,
+		Period:           ttl,
 	}
 }
 
 type Handler struct {
 	Logger          *zap.Logger
 	RedisConnection internal.RedisConnection
+	ristrettoCache  *ristretto.Cache[string, internal.RedisEntry]
 	Config          *HandlerConfig
 }
 
@@ -220,7 +202,7 @@ func NewHandler(logger *zap.Logger, conn internal.RedisConnection, h *HandlerCon
 	return &Handler{
 		Logger:          logger,
 		RedisConnection: conn,
-		Config: h,
+		Config:          h,
 	}
 }
 
@@ -243,7 +225,6 @@ func (h *Handler) health(c *gin.Context) {
 func (h *Handler) isRequestAllowed(c *gin.Context) {
 	const useRistrettoCostCalc int64 = 0
 	var messageFromClient IncomingMessage
-	// var statusCode int
 	var userId string
 
 	if err := c.ShouldBindJSON(&messageFromClient); err != nil {
@@ -252,11 +233,11 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 	}
 
 	algo := messageFromClient.Algorithm
-	
+
 	if !internal.VerifyAlgorithm(algo) {
 		algo = h.Config.DefaultAlgorithm
 	}
-	
+
 	userId = messageFromClient.ClientId
 	requestUserHash := "ratelimit:" + userId + ":" + algo
 
@@ -280,24 +261,33 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		}
 	}
 
-	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(globalSettings.Period.Seconds()), int(globalSettings.Limit), algo)
+	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(h.Config.Period.Seconds()), int(h.Config.Limit), algo)
 
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "application/json")
 		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
-		c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, globalSettings.Period), 10))
-		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
+		c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, h.Config.Period), 10))
+		c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(h.Config.Limit, 10))
 		c.JSON(http.StatusInternalServerError, nil)
+
+		o := internal.RedisEntry{
+			HitCount: v.HitCount,
+			FirstHit: v.FirstHit,
+		}
+
+		h.ristrettoCache.SetWithTTL(requestUserHash, o, 0, h.Config.Period-(time.Duration(time.Now().UnixNano())-time.Duration(o.FirstHit)))
+		h.ristrettoCache.Wait()
 		return
 	}
 
 	newEntry := internal.RedisEntry{HitCount: v.HitCount, FirstHit: v.FirstHit}
 
-	expiry := time.Unix(v.FirstHit, 0).Add(globalSettings.Period)
+	expiry := time.Unix(v.FirstHit, 0).Add(h.Config.Period)
 	ttl := time.Until(expiry)
 
 	if ttl > 0 {
-		ristrettoCache.SetWithTTL(requestUserHash, newEntry, 0, ttl)
+		h.ristrettoCache.SetWithTTL(requestUserHash, newEntry, 0, ttl)
+		h.ristrettoCache.Wait()
 	}
 
 	status := http.StatusOK
@@ -306,8 +296,9 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
-	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, globalSettings.Period), 10))
-	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(globalSettings.Limit, 10))
+	c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(v.FirstHit, h.Config.Period), 10))
+	c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(h.Config.Limit, 10))
+
 	c.JSON(status, v)
 }
 
