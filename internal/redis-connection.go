@@ -188,8 +188,9 @@ func OpenRedisConnection(r *RedisConnection) (*redis.Client, error) {
 		Username: r.Username, // use your Redis user. More info https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
 		Password: r.Password, // use your Redis password
 	})
-	ctx := context.Background()
-
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	
 	_, err := redisClient.Ping(ctx).Result() // *net.OpError
 	
 	if err != nil {
