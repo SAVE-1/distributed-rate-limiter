@@ -1,4 +1,4 @@
 # TODO
 
-## 17-09-2026
-- should add functionality to detect whether Redis goes down, currently no reaction if it goes down while server is up
+## 2026-09-17
+- [ ] Detect Redis disconnection/downtime - currently no reconnect or fallback logic if Redis goes down while the server is running
