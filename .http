@@ -1,7 +1,10 @@
 
+
+@host_port=12600
+
 ###
 # rate limit test 1.
-POST http://localhost:8080/v1/ratelimit
+POST http://localhost:{{host_port}}/v1/ratelimit
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
@@ -12,7 +15,7 @@ Accept-Language: en-US,en;q=0.5
 
 ###
 # rate limit test 2.
-POST http://localhost:8080/v1/ratelimit
+POST http://localhost:{{host_port}}/v1/ratelimit
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
@@ -23,7 +26,7 @@ Accept-Language: en-US,en;q=0.5
 
 ###
 # rate limit test 2.
-POST http://localhost:8080/v1/ratelimit
+POST http://localhost:{{host_port}}/v1/ratelimit
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
@@ -35,37 +38,37 @@ Accept-Language: en-US,en;q=0.5
 
 ###
 # rate limit test 2.
-POST http://localhost:8080/v1/ratelimit
+POST http://localhost:{{host_port}}/v1/ratelimit
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 {
-    "ClientId": "tester",
+    "ClientId": "testerdddd111aaa",
     "RulesId": "content name",
     "Algorithm": "fixed_window"
 }
 
 ###
 # health check
-GET http://localhost:8080/v1/health
+GET http://localhost:{{host_port}}/v1/health
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 ###
 # ping
-GET http://localhost:8080/v1/ping
+GET http://localhost:{{host_port}}/v1/ping
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 
 ###
 # rate limit test 2.
-POST http://localhost:8080/v1/ratelimit
+POST http://localhost:{{host_port}}/v1/ratelimit
 Content-Type: application/json
 Accept-Language: en-US,en;q=0.5
 
 {
-    "ClientId": "tester2",
+    "ClientId": "tester2111aaa3dddfdddddddd",
     "RulesId": "content name",
     "Algorithm": "fixed_window"
 }
