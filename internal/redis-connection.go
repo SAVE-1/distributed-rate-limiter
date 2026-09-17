@@ -26,7 +26,6 @@ func (i *RedisEntry) Reset() {
 	i.FirstHit = time.Now().Unix()
 }
 
-// Script returns: {passes, hitcount, firsthit, remaining, period}
 type RedisResponse struct {
 	Passes     bool
 	HitCount   int64
@@ -84,7 +83,7 @@ func (i RedisEntry) String() string {
 	return b.String()
 }
 
-func (h *RedisConnection) ProcessSomething(hashName string, period int, limit int, algo string) (RedisResponse, error) {
+func (h *RedisConnection) ProcessRatelimitRequest(hashName string, period int, limit int, algo string) (RedisResponse, error) {
 	if h.RedisClient == nil {
         h.Logger.Error("ERROR: RedisClient is NIL!")
         return RedisResponse{}, errors.New("redis client not initialized")
@@ -95,7 +94,7 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 
 	var e RedisResponse
 
-	algorithm := algoFactory(algo)
+	algorithm := ratelimitAlgorithmFactory(algo)
 
 	t, err := algorithm.Run(ctx, h.RedisClient, []string{hashName}, values...).Result()
 	
@@ -129,7 +128,7 @@ func (h *RedisConnection) ProcessSomething(hashName string, period int, limit in
 	return e, nil
 }
 
-func algoFactory(algo string) *redis.Script {
+func ratelimitAlgorithmFactory(algo string) *redis.Script {
 	switch algo {
 	case "fixed_window":
 		return redis.NewScript(ScriptFixedWindow)

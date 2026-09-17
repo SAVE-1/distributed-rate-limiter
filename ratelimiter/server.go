@@ -261,7 +261,7 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 		}
 	}
 
-	v, err := h.RedisConnection.ProcessSomething(requestUserHash, int(h.Config.Period.Seconds()), int(h.Config.Limit), algo)
+	v, err := h.RedisConnection.ProcessRatelimitRequest(requestUserHash, int(h.Config.Period.Seconds()), int(h.Config.Limit), algo)
 
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "application/json")
