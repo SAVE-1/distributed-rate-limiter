@@ -3,6 +3,7 @@ package ratelimiter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/SAVE-1/distributed-rate-limiter/internal"
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/gin-gonic/gin"
+	"go-micro.dev/v5/logger"
 	"go.uber.org/zap"
 )
 
@@ -26,6 +28,11 @@ func GetVersion() string {
 	return version
 }
 
+const (
+	Development = "dev"
+	Production  = "prod"
+)
+
 type RateLimiterConfiguration struct {
 	RedisAddress             string
 	RedisUsername            string
@@ -34,16 +41,33 @@ type RateLimiterConfiguration struct {
 	Limit                    int64
 	AllowStartupWithoutRedis bool
 	DefaultAlgorithm         string
+	Port                     int
+	Mode                     string
 }
 
-func Start(ratelimiterConfig RateLimiterConfiguration) error {
-	config := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
-		Development:      false,
-		Encoding:         "json",
-		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
-		OutputPaths:      []string{"stdout", "rate-limiter.log"},
-		ErrorOutputPaths: []string{"stdout", "stderr", "rate-limiter.log"},
+func NewRatelimiter(ratelimiterConfig RateLimiterConfiguration) (*RatelimiterHandler, error) {
+	var config zap.Config
+
+	if ratelimiterConfig.Mode == Development {
+		config = zap.Config{
+			Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
+			Development:      true,
+			Encoding:         "json",
+			EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+			OutputPaths:      []string{"stdout", "rate-limiter.log"},
+			ErrorOutputPaths: []string{"stdout", "stderr", "rate-limiter.log"},
+		}
+	} else if ratelimiterConfig.Mode == Production {
+		config = zap.Config{
+			Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
+			Development:      false,
+			Encoding:         "json",
+			EncoderConfig:    zap.NewProductionEncoderConfig(),
+			OutputPaths:      []string{"stdout", "rate-limiter.log"},
+			ErrorOutputPaths: []string{"stdout", "stderr", "rate-limiter.log"},
+		}
+	} else {
+		return nil, fmt.Errorf("invalid mode %q: must be %q or %q", ratelimiterConfig.Mode, Development, Production)
 	}
 
 	logger, err := config.Build()
@@ -64,7 +88,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	if redisConnectionError != nil {
 		// stop the server altogether
 		if !ratelimiterConfig.AllowStartupWithoutRedis {
-			return errors.Join(redisConnectionError, errors.New("startup not allowed without Redis"))
+			return nil, errors.Join(redisConnectionError, errors.New("startup not allowed without Redis"))
 		}
 	} else {
 		logger.Info("Connected to REDIS instance successfully")
@@ -74,11 +98,11 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 
 	serverConfig := NewHandlerConfig(ratelimiterConfig.DefaultAlgorithm, ratelimiterConfig.Period)
 
-	h := NewHandler(logger, *redisConnection, serverConfig)
+	h := NewRatelimiterHandler(logger, *redisConnection, serverConfig)
 
 	if h.Config.Period != 1*time.Minute {
 		logger.Error("Configuration error - global window must be 1min for now")
-		return errors.New("Startup not allowed with a limit other than 1min")
+		return nil, errors.New("Startup not allowed with a limit other than 1min")
 	}
 
 	h.Config.Limit = ratelimiterConfig.Limit
@@ -100,34 +124,36 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	// this is fatal, internal cache is required in all cases
 	if ristrettoInitError != nil {
 		h.Logger.Error("Internal error, unable to init internal cache, shutting down rate limiter", zap.Error(ristrettoInitError))
-		return ristrettoInitError
+		return nil, ristrettoInitError
 	} else {
 		h.Logger.Info("Internal cache started successfully")
 	}
 
 	defer h.ristrettoCache.Close()
-	gin.SetMode(gin.ReleaseMode)
 
-	router := gin.Default()
-
-	{
-		v1 := router.Group("/v1")
-
-		v1.GET("/ping", h.ping)
-
-		v1.GET("/health", h.health)
-
-		v1.POST("/ratelimit", h.isRequestAllowed)
-	}
-
+	router := BuildRouter(h)
 	server := &http.Server{
-		Addr:    ":8080",
+		// Addr:    ":" + ratelimiterConfig.Port fmt.Printf(":%d", ratelimiterConfig.Port),
+		Addr:    fmt.Sprintf(":%d", ratelimiterConfig.Port),
 		Handler: router,
 	}
 
+	h.httpThingy = server
+	h.router = router
+
+	return h, nil
+}
+
+func Start(ratelimiterConfig RateLimiterConfiguration) error {
+	h, err := NewRatelimiter(ratelimiterConfig)
+
+	if err != nil {
+		return err
+	}
+
 	go func() {
-		log.Println("Starting server on :8080")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Println("Starting server on port", ratelimiterConfig.Port)
+		if err := h.httpThingy.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("Listen error", zap.Error(err))
 		}
 	}()
@@ -143,7 +169,7 @@ func Start(ratelimiterConfig RateLimiterConfiguration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := h.httpThingy.Shutdown(ctx); err != nil {
 		logger.Fatal("Forced shutdown", zap.Error(err))
 	}
 
@@ -191,28 +217,53 @@ func NewHandlerConfig(algo string, ttl time.Duration) *HandlerConfig {
 	}
 }
 
-type Handler struct {
+type RatelimiterHandler struct {
 	Logger          *zap.Logger
 	RedisConnection internal.RedisConnection
 	ristrettoCache  *ristretto.Cache[string, internal.RedisEntry]
 	Config          *HandlerConfig
+	router          *gin.Engine
+	httpThingy		*http.Server
 }
 
-func NewHandler(logger *zap.Logger, conn internal.RedisConnection, h *HandlerConfig) *Handler {
-	return &Handler{
+
+
+func BuildRouter(h *RatelimiterHandler) *gin.Engine {
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New() // use gin.New() in tests — gin.Default() adds a logger that spams stdout
+
+	v1 := router.Group("/v1")
+	v1.GET("/ping", h.ping)
+	v1.GET("/health", h.health)
+	v1.POST("/ratelimit", h.isRequestAllowed)
+
+	return router
+}
+
+func NewRatelimiterHandler(logger *zap.Logger, conn internal.RedisConnection, h *HandlerConfig) *RatelimiterHandler {
+	return &RatelimiterHandler{
 		Logger:          logger,
 		RedisConnection: conn,
 		Config:          h,
 	}
 }
 
-func (h *Handler) ping(c *gin.Context) {
+func (h *RatelimiterHandler) getFromCache(key string) (internal.RedisEntry, bool) {
+  	value, found := h.ristrettoCache.Get(key)
+  	if !found {
+  	  return internal.RedisEntry{}, false
+  	}
+
+	return value, true
+}
+
+func (h *RatelimiterHandler) ping(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "pong",
 	})
 }
 
-func (h *Handler) health(c *gin.Context) {
+func (h *RatelimiterHandler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "feelin' fine!",
 		"health":       "healthy",
@@ -222,7 +273,7 @@ func (h *Handler) health(c *gin.Context) {
 }
 
 // isRequestAllowed(clientId, rulesId) -> {passes: boolean, remaining: number, resetTime: timestamp}
-func (h *Handler) isRequestAllowed(c *gin.Context) {
+func (h *RatelimiterHandler) isRequestAllowed(c *gin.Context) {
 	const useRistrettoCostCalc int64 = 0
 	var messageFromClient IncomingMessage
 	var userId string
@@ -242,14 +293,26 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 	requestUserHash := "ratelimit:" + userId + ":" + algo
 
 	if entry, found := h.ristrettoCache.Get(requestUserHash); found {
-		if entry.HitCount >= h.Config.Limit {
+		tooManyRequests := entry.HitCount >= h.Config.Limit
+		if tooManyRequests {
 			entry.HitCount++
 
 			// now - "when first hit registered" + "configured period"
-			resets := time.Duration(time.Now().UnixNano())-time.Duration(entry.FirstHit) + h.Config.Period
+			resets := time.Duration(time.Now().UnixNano()) - time.Duration(entry.FirstHit) + h.Config.Period
 
 			h.ristrettoCache.SetWithTTL(requestUserHash, entry, 0, resets)
 			h.ristrettoCache.Wait()
+			// needs headers
+			c.Writer.Header().Set("Content-Type", "application/json")
+			var hitcount int64 = 0
+
+			if (h.Config.Limit - entry.HitCount) > 0 {
+				hitcount = h.Config.Limit - entry.HitCount
+			}
+
+			c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(hitcount, 10))
+			c.Writer.Header().Set("RateLimit-Reset", strconv.FormatInt(secondsUntilRatelimitReset(entry.FirstHit, h.Config.Period), 10))
+			c.Writer.Header().Set("RateLimit-Limit", strconv.FormatInt(h.Config.Limit, 10))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"Passes":     false,
 				"HitCount":   entry.HitCount,
@@ -257,12 +320,14 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 				"Remaining":  0,
 				"ResetsUnix": resets.Seconds(),
 			})
+			h.Logger.Info("entity found in cache", zap.String("entity", entry.String()))
 			return
 		}
 	}
 
 	v, err := h.RedisConnection.ProcessRatelimitRequest(requestUserHash, int(h.Config.Period.Seconds()), int(h.Config.Limit), algo)
 
+	// TODO: not sure about this branch, I mean, yeah it has to exist, but the internals could be a tad better
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "application/json")
 		c.Writer.Header().Set("RateLimit-Remaining", strconv.FormatInt(v.Remaining, 10))
@@ -277,6 +342,7 @@ func (h *Handler) isRequestAllowed(c *gin.Context) {
 
 		h.ristrettoCache.SetWithTTL(requestUserHash, o, 0, h.Config.Period-(time.Duration(time.Now().UnixNano())-time.Duration(o.FirstHit)))
 		h.ristrettoCache.Wait()
+		h.Logger.Info("error with Redis connection", zap.Error(err))
 		return
 	}
 

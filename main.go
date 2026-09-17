@@ -117,6 +117,23 @@ func main() {
 					}
 					return fmt.Errorf("Must be positive")
 				}},
+			&cli.IntFlag{
+				Name:    "port",
+				Value:   12600,
+				Usage:   "what port should be used",
+				Sources: cli.EnvVars("SERVER_PORT"),
+			},
+			&cli.StringFlag{
+				Name:    "mode",
+				Value:   "dev",
+				Usage:   "what release mode should be used for logging",
+				Sources: cli.EnvVars("RELEASE_MODE"),
+				Validator: func(m string) error {
+					if m != ratelimiter.Development && m != ratelimiter.Production {
+						return fmt.Errorf("mode must be %q or %q", ratelimiter.Development, ratelimiter.Production)
+					}
+					return nil
+				}},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if cmd.Bool("version") {
@@ -136,6 +153,8 @@ func main() {
 				Period:                   seconds,
 				Limit:                    int64(cmd.Int("reqlimit")),
 				AllowStartupWithoutRedis: cmd.Bool("redis"),
+				Port:                     cmd.Int("port"),
+				Mode:                     cmd.String("mode"),
 			}
 
 			if err := ratelimiter.Start(config); err != nil {
