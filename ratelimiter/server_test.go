@@ -83,25 +83,60 @@ func TestHealth(t *testing.T) {
 }
 
 // should be ok, does not reach/use redis related code at any point
-func TestRateLimit_MalformedBody(t *testing.T) {
+func TestRateLimit_MissingFieldsInPayloadJson(t *testing.T) {
+	// code from: https://golang.testcontainers.org/quickstart/
+	ctx := context.Background()
+	redisC, err := testcontainers.Run(
+		ctx, "redis:latest",
+		testcontainers.WithExposedPorts(fmt.Sprintf("%d/tcp", REDISPORT)),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort(fmt.Sprintf("%d/tcp", REDISPORT)),
+			wait.ForLog("Ready to accept connections"),
+		),
+	)
+	testcontainers.CleanupContainer(t, redisC)
+	require.NoError(t, err)
+
+	redisEndpoint, err := redisC.Endpoint(ctx, fmt.Sprintf("%d/tcp", REDISPORT))
+	require.NoError(t, err)
+
+	tt := strings.LastIndex(redisEndpoint, ":")
+
 	config := RateLimiterConfiguration{
-		// RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		// RedisUsername:            "",
-		// RedisPassword:            "",
-		// Period:                   time.Minute,
-		// Limit:                    5,
-		AllowStartupWithoutRedis: true,
+		RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: false,
 		Port:                     12600,
 		Mode:                     "dev",
 	}
 
-	r, _ := NewRatelimiter(config)
+	r, err := NewRatelimiter(config)
 
+	if err != nil {
+		t.Error("error in constructor")
+		return
+	}
+
+	/*
+		len() 		 = 						 5
+		"Passes" 	 = interface {}(bool) 	 false
+		"HitCount" 	 = interface {}(float64) 3
+		"FirstHit" 	 = interface {}(float64) 1787733908
+		"Remaining"	 = interface {}(float64) 0
+		"ResetsUnix" = interface {}(float64) 0
+	*/
+
+	var body1 map[string]any
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/ratelimit",
-		bytes.NewBufferString(`{"ClientId": "user1"}`)) // missing RulesId and Algorithm
+	bytes.NewBufferString(`{"ClientId": "user1" }`))
 	req.Header.Set("Content-Type", "application/json")
+
 	r.router.ServeHTTP(w, req)
+	json.Unmarshal(w.Body.Bytes(), &body1)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
