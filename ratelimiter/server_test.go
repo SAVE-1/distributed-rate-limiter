@@ -21,18 +21,12 @@ const (
 )
 
 func TestPing(t *testing.T) {
-	config := RateLimiterConfiguration{
-		// RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		// RedisUsername:            "",
-		// RedisPassword:            "",
-		// Period:                   time.Minute,
-		// Limit:                    5,
-		AllowStartupWithoutRedis: true,
-		Port:                     12600,
-		Mode:                     "dev",
-	}
+	r, err := helperInitForTestContainers(t)
 
-	r, _ := NewRatelimiter(config)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/ping", nil)
@@ -50,18 +44,12 @@ func TestPing(t *testing.T) {
 }
 
 func TestHealth(t *testing.T) {
-	config := RateLimiterConfiguration{
-		// RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		// RedisUsername:            "",
-		// RedisPassword:            "",
-		// Period:                   time.Minute,
-		// Limit:                    5,
-		AllowStartupWithoutRedis: true,
-		Port:                     12600,
-		Mode:                     "dev",
-	}
+	r, err := helperInitForTestContainers(t)
 
-	r, _ := NewRatelimiter(config)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
@@ -82,41 +70,13 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+
 // should be ok, does not reach/use redis related code at any point
 func TestRateLimit_MissingFieldsInPayloadJson(t *testing.T) {
-	// code from: https://golang.testcontainers.org/quickstart/
-	ctx := context.Background()
-	redisC, err := testcontainers.Run(
-		ctx, "redis:latest",
-		testcontainers.WithExposedPorts(fmt.Sprintf("%d/tcp", REDISPORT)),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort(fmt.Sprintf("%d/tcp", REDISPORT)),
-			wait.ForLog("Ready to accept connections"),
-		),
-	)
-	testcontainers.CleanupContainer(t, redisC)
-	require.NoError(t, err)
-
-	redisEndpoint, err := redisC.Endpoint(ctx, fmt.Sprintf("%d/tcp", REDISPORT))
-	require.NoError(t, err)
-
-	tt := strings.LastIndex(redisEndpoint, ":")
-
-	config := RateLimiterConfiguration{
-		RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		RedisUsername:            "",
-		RedisPassword:            "",
-		Period:                   time.Minute,
-		Limit:                    2,
-		AllowStartupWithoutRedis: false,
-		Port:                     12600,
-		Mode:                     "dev",
-	}
-
-	r, err := NewRatelimiter(config)
+	r, err := helperInitForTestContainers(t)
 
 	if err != nil {
-		t.Error("error in constructor")
+		t.Error(err)
 		return
 	}
 
@@ -150,39 +110,10 @@ func TestRateLimit_MissingFieldsInPayloadJson(t *testing.T) {
 }
 
 func TestRateLimiter_LimitExceeded(t *testing.T) {
-	// code from: https://golang.testcontainers.org/quickstart/
-	ctx := context.Background()
-	redisC, err := testcontainers.Run(
-		ctx, "redis:latest",
-		testcontainers.WithExposedPorts(fmt.Sprintf("%d/tcp", REDISPORT)),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort(fmt.Sprintf("%d/tcp", REDISPORT)),
-			wait.ForLog("Ready to accept connections"),
-		),
-	)
-	testcontainers.CleanupContainer(t, redisC)
-	require.NoError(t, err)
-
-	redisEndpoint, err := redisC.Endpoint(ctx, fmt.Sprintf("%d/tcp", REDISPORT))
-	require.NoError(t, err)
-
-	tt := strings.LastIndex(redisEndpoint, ":")
-
-	config := RateLimiterConfiguration{
-		RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		RedisUsername:            "",
-		RedisPassword:            "",
-		Period:                   time.Minute,
-		Limit:                    2,
-		AllowStartupWithoutRedis: false,
-		Port:                     12600,
-		Mode:                     "dev",
-	}
-
-	r, err := NewRatelimiter(config)
+	r, err := helperInitForTestContainers(t)
 
 	if err != nil {
-		t.Error("error in constructor")
+		t.Error(err)
 		return
 	}
 
@@ -242,3 +173,45 @@ func TestRateLimiter_LimitExceeded(t *testing.T) {
 	}
 
 }
+
+func helperInitForTestContainers(t *testing.T) (*RatelimiterHandler, error) {
+	// code from: https://golang.testcontainers.org/quickstart/
+	ctx := context.Background()
+	redisC, err := testcontainers.Run(
+		ctx, "redis:latest",
+		testcontainers.WithExposedPorts(fmt.Sprintf("%d/tcp", REDISPORT)),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort(fmt.Sprintf("%d/tcp", REDISPORT)),
+			wait.ForLog("Ready to accept connections"),
+		),
+	)
+	testcontainers.CleanupContainer(t, redisC)
+	require.NoError(t, err)
+
+	redisEndpoint, err := redisC.Endpoint(ctx, fmt.Sprintf("%d/tcp", REDISPORT))
+	require.NoError(t, err)
+
+	tt := strings.LastIndex(redisEndpoint, ":")
+
+	config := RateLimiterConfiguration{
+		RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: false,
+		Port:                     12600,
+		Mode:                     "dev",
+	}
+
+	r, err := NewRatelimiter(config)
+
+	if err != nil {
+		t.Error("error in myInit()")
+		return nil, err
+	}
+
+	return r, nil
+}
+
+

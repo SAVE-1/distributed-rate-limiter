@@ -30,6 +30,10 @@ tasks:
     cmds:
       - ./bin/{{.EXENAME}} help
 
+  test:
+    cmds:
+      - go test ./...
+
 
 # UTILITY
   loc:
