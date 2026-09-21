@@ -21,7 +21,18 @@ const (
 )
 
 func TestPing(t *testing.T) {
-	r, err := helperInitForTestContainers(t)
+		config := RateLimiterConfiguration{
+		RedisAddress:             "127.0.0.1:",
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: true,
+		Port:                     12600,
+		Mode:                     "dev",
+	}
+
+	r, err := helperInitForTestContainers(t, config)
 
 	if err != nil {
 		t.Error(err)
@@ -44,7 +55,18 @@ func TestPing(t *testing.T) {
 }
 
 func TestHealth(t *testing.T) {
-	r, err := helperInitForTestContainers(t)
+	config := RateLimiterConfiguration{
+		RedisAddress:             "127.0.0.1:",
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: true,
+		Port:                     12600,
+		Mode:                     "dev",
+	}
+
+	r, err := helperInitForTestContainers(t, config)
 
 	if err != nil {
 		t.Error(err)
@@ -73,7 +95,18 @@ func TestHealth(t *testing.T) {
 
 // should be ok, does not reach/use redis related code at any point
 func TestRateLimit_MissingFieldsInPayloadJson(t *testing.T) {
-	r, err := helperInitForTestContainers(t)
+	config := RateLimiterConfiguration{
+		RedisAddress:             "127.0.0.1:",
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: false,
+		Port:                     12600,
+		Mode:                     "dev",
+	}
+
+	r, err := helperInitForTestContainers(t, config)
 
 	if err != nil {
 		t.Error(err)
@@ -110,7 +143,18 @@ func TestRateLimit_MissingFieldsInPayloadJson(t *testing.T) {
 }
 
 func TestRateLimiter_LimitExceeded(t *testing.T) {
-	r, err := helperInitForTestContainers(t)
+	config := RateLimiterConfiguration{
+		RedisAddress:             "127.0.0.1:",
+		RedisUsername:            "",
+		RedisPassword:            "",
+		Period:                   time.Minute,
+		Limit:                    2,
+		AllowStartupWithoutRedis: false,
+		Port:                     12600,
+		Mode:                     "dev",
+	}
+
+	r, err := helperInitForTestContainers(t, config)
 
 	if err != nil {
 		t.Error(err)
@@ -142,39 +186,41 @@ func TestRateLimiter_LimitExceeded(t *testing.T) {
 	w3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest(http.MethodPost, "/v1/ratelimit",
 	bytes.NewBufferString(`{"ClientId": "user1", "RulesId": "content name", "Algorithm": "fixed_window" }`))
+	req3.Header.Set("Content-Type", "application/json")
 
 	r.router.ServeHTTP(w1, req1)
 	json.Unmarshal(w1.Body.Bytes(), &body1)
 
-	if v, ok := body1["Passes"]; !ok && v != true {
+	if v, ok := body1["Passes"]; !ok || v != true {
 		t.Error("expected 'Passes' = true in response")
 	}
 	
 	r.router.ServeHTTP(w2, req2)
 	json.Unmarshal(w2.Body.Bytes(), &body2)
 
-	if v, ok := body2["Passes"]; !ok && v != false {
+	if v, ok := body2["Passes"]; !ok || v != false {
 		t.Error("expected 'Passes' = false in response")
 	}
 
 	r.router.ServeHTTP(w3, req3)
 	json.Unmarshal(w3.Body.Bytes(), &body3)
 
-	if v, ok := body3["Passes"]; !ok && v != false {
+	if v, ok := body3["Passes"]; !ok || v != false {
 		t.Error("expected 'Passes' = false in response")
 	}
 
-	if v, ok := body3["HitCount"]; !ok && v != 3 {
+	if v, ok := body3["HitCount"]; !ok || v != 3 {
 		t.Error("expected 'HitCount' = 3 in response")
 	}
 
-	if v, ok := body3["Remaining"]; !ok && v != 0 {
+	if v, ok := body3["Remaining"]; !ok || v != 0 {
 		t.Error("expected 'Remaining' = 0 in response")
 	}
 
 }
 
-func helperInitForTestContainers(t *testing.T) (*RatelimiterHandler, error) {
+
+func helperInitForTestContainers(t *testing.T, config RateLimiterConfiguration) (*RatelimiterHandler, error) {
 	// code from: https://golang.testcontainers.org/quickstart/
 	ctx := context.Background()
 	redisC, err := testcontainers.Run(
@@ -193,16 +239,18 @@ func helperInitForTestContainers(t *testing.T) (*RatelimiterHandler, error) {
 
 	tt := strings.LastIndex(redisEndpoint, ":")
 
-	config := RateLimiterConfiguration{
-		RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
-		RedisUsername:            "",
-		RedisPassword:            "",
-		Period:                   time.Minute,
-		Limit:                    2,
-		AllowStartupWithoutRedis: false,
-		Port:                     12600,
-		Mode:                     "dev",
-	}
+	config.RedisAddress = config.RedisAddress + redisEndpoint[tt+1:]
+
+	// config := RateLimiterConfiguration{
+	// 	RedisAddress:             "127.0.0.1:" + redisEndpoint[tt+1:],
+	// 	RedisUsername:            "",
+	// 	RedisPassword:            "",
+	// 	Period:                   time.Minute,
+	// 	Limit:                    2,
+	// 	AllowStartupWithoutRedis: false,
+	// 	Port:                     12600,
+	// 	Mode:                     "dev",
+	// }
 
 	r, err := NewRatelimiter(config)
 
